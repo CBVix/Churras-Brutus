@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { Bike, Utensils, Search, Clock, Check, AlertTriangle, Flame, CheckCircle2, Archive, ShoppingBag, XCircle, Printer, Loader2 } from 'lucide-react';
 import { Order, OrderStatus, Tenant } from '../../types';
@@ -181,7 +180,7 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
                                     <span className="ml-2">R$ {(item.price * item.quantity).toFixed(2)}</span>
                                 </div>
                                 {item.itemObservation && (
-                                    <div className="text-[11px] italic mt-1 ml-4 border-l-2 border-gray-300 pl-2">>> {item.itemObservation}</div>
+                                    <div className="text-[11px] italic mt-1 ml-4 border-l-2 border-gray-300 pl-2">{'>>'} {item.itemObservation}</div>
                                 )}
                                 {item.extras && item.extras.length > 0 && (
                                     <div className="text-[11px] mt-1 ml-4 text-gray-600">+ {item.extras.join(', ')}</div>
