@@ -20,6 +20,7 @@ import {
   Crown
 } from 'lucide-react';
 import { Product, Tenant, Coupon, OrderType } from '../types';
+import ReviewsModal from '../components/ReviewsModal';
 
 interface HomeProps {
   onSelectProduct: (product: Product) => void;
@@ -34,6 +35,7 @@ interface HomeProps {
 const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsDarkMode, coupons, user, orderType }) => {
   const [selectedCategoryId, setSelectedCategoryId] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [showReviewsModal, setShowReviewsModal] = useState(false);
 
   const getCategoryIcon = (catId: string) => {
     const iconSize = 16;
@@ -102,6 +104,14 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
   return (
     <div className={`min-h-screen pb-32 animate-in fade-in duration-500 transition-all duration-700 ${isDarkMode ? 'bg-transparent text-white' : 'text-black'}`}>
       
+      {/* Reviews Modal */}
+      <ReviewsModal 
+        isOpen={showReviewsModal} 
+        onClose={() => setShowReviewsModal(false)} 
+        tenantSlug={tenant.slug}
+        tenantName={tenant.name}
+      />
+
       {/* CARD DE IDENTIDADE */}
       <section className="mb-6">
         <div className={`backdrop-blur-3xl p-6 border-b shadow-xl relative transition-all duration-500 
@@ -147,13 +157,24 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
           </div>
           <div className="grid grid-cols-3 gap-2">
              <a href={`https://instagram.com/${tenant.instagram}`} target="_blank" rel="noreferrer" className={`flex flex-col items-center justify-center gap-1 border py-2.5 rounded-xl text-[7px] font-bold uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/5 border-white/5 text-white hover:bg-white/10' : 'bg-white border-silver text-[#334155] hover:shadow-md'}`}>
-                <Instagram size={14} className="text-[#E4405F]" /> Instagram
+                <div className="w-14 h-14 flex items-center justify-center">
+                  <Instagram size={14} className="text-[#E4405F]" />
+                </div>
+                <span>Instagram</span>
              </a>
              <a href={`https://wa.me/${tenant.whatsapp}`} target="_blank" rel="noreferrer" className={`flex flex-col items-center justify-center gap-1 border py-2.5 rounded-xl text-[7px] font-bold uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/5 border-white/5 text-white hover:bg-white/10' : 'bg-white border-silver text-[#334155] hover:shadow-md'}`}>
-                <MessageCircle size={14} className="text-[#25D366]" /> WhatsApp
+                <div className="w-14 h-14 flex items-center justify-center">
+                  <MessageCircle size={14} className="text-[#25D366]" />
+                </div>
+                <span>WhatsApp</span>
              </a>
-             <button className={`flex flex-col items-center justify-center gap-1 border py-2.5 rounded-xl text-[7px] font-bold uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/5 border-white/5 text-white hover:bg-white/10' : 'bg-white border-silver text-[#334155] hover:shadow-md'}`}>
-                <Star size={14} className="text-yellow-500 fill-yellow-500" /> Reviews
+             <button 
+                onClick={() => setShowReviewsModal(true)}
+                className={`flex flex-col items-center justify-center gap-1 border py-2.5 rounded-xl text-[7px] font-bold uppercase tracking-widest transition-all ${isDarkMode ? 'bg-white/5 border-white/5 text-white hover:bg-white/10' : 'bg-white border-silver text-[#334155] hover:shadow-md'}`}>
+                <div className="w-14 h-14 flex items-center justify-center">
+                  <Star size={14} className="text-yellow-500 fill-yellow-500" />
+                </div>
+                <span>Reviews</span>
              </button>
           </div>
         </div>
