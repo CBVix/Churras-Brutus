@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Bike, Utensils, Search, Clock, Check, AlertTriangle, Flame, CheckCircle2, Archive, ShoppingBag, XCircle, Printer, Loader2 } from 'lucide-react';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { Bike, Utensils, Search, Clock, Check, AlertTriangle, Flame, CheckCircle2, Archive, ShoppingBag, XCircle, Printer, Loader2, Volume2, VolumeX } from 'lucide-react';
 import { Order, OrderStatus, Tenant } from '../../types';
+import { supabase } from '../../supabaseClient';
 
 interface DashboardOrdersProps {
   orders: Order[];
@@ -14,6 +16,11 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
   const [orderSearch, setOrderSearch] = useState('');
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  
+  // Audio states
+  const [isAudioEnabled, setIsAudioEnabled] = useState(false);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
   const [checkedItems, setCheckedItems] = useState<Record<string, Record<number, boolean>>>(() => {
     try {
       const saved = localStorage.getItem('kds_checked_items');
@@ -23,6 +30,32 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
     }
   });
 
+  // Inicializar áudio
+  useEffect(() => {
+    audioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+  }, []);
+
+  // Monitoramento Realtime para o KDS
+  useEffect(() => {
+    const channel = supabase.channel('kds_orders_monitor')
+      .on('postgres_changes', { 
+        event: 'INSERT', 
+        schema: 'public', 
+        table: 'orders',
+        filter: `tenant_slug=eq.${tenant.slug}` 
+      }, (payload) => {
+        console.log('Novo pedido recebido no KDS:', payload.new);
+        if (isAudioEnabled && audioRef.current) {
+          audioRef.current.play().catch(e => console.error('Erro ao tocar áudio:', e));
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [tenant.slug, isAudioEnabled]);
+
   useEffect(() => {
     localStorage.setItem('kds_checked_items', JSON.stringify(checkedItems));
   }, [checkedItems]);
@@ -31,10 +64,7 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
   useEffect(() => {
     if (printingOrder) {
       const generatePDF = async () => {
-        // Log de verificação da biblioteca como solicitado
         const html2pdfLib = (window as any).html2pdf;
-        console.log('Biblioteca html2pdf carregada:', !!html2pdfLib);
-        
         if (!html2pdfLib) {
           alert('Erro: A biblioteca de PDF não carregou. Verifique sua conexão.');
           setPrintingOrder(null);
@@ -42,10 +72,7 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
         }
 
         setIsGeneratingPdf(true);
-        
-        // Aguarda renderização do elemento oculto no DOM
         await new Promise(resolve => setTimeout(resolve, 400));
-        
         const element = document.getElementById('printable-receipt-pdf');
         
         if (element) {
@@ -53,17 +80,8 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
             margin: 0,
             filename: `comanda-pedido-${printingOrder.orderNumber || '00'}.pdf`,
             image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { 
-              scale: 3, 
-              useCORS: true,
-              logging: false,
-              letterRendering: true
-            },
-            jsPDF: { 
-              unit: 'mm', 
-              format: [80, 297], // 80mm de largura para bobina térmica
-              orientation: 'portrait' 
-            }
+            html2canvas: { scale: 3, useCORS: true, logging: false, letterRendering: true },
+            jsPDF: { unit: 'mm', format: [80, 297], orientation: 'portrait' }
           };
 
           try {
@@ -73,7 +91,6 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
             alert('Erro ao gerar o PDF da comanda.');
           }
         }
-        
         setIsGeneratingPdf(false);
         setPrintingOrder(null);
       };
@@ -128,8 +145,35 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
     window.open(`https://wa.me/${validPhone}?text=${encodeURIComponent(message)}`, '_blank');
   };
 
+  const enableAudio = () => {
+    if (audioRef.current) {
+      audioRef.current.play().then(() => {
+        audioRef.current?.pause();
+        if (audioRef.current) audioRef.current.currentTime = 0;
+        setIsAudioEnabled(true);
+      }).catch(e => console.error("Falha ao habilitar áudio:", e));
+    }
+  };
+
   return (
     <div className="h-full flex flex-col gap-4">
+       {/* AVISO DE ATIVAÇÃO DE SOM */}
+       {!isAudioEnabled && (
+         <button 
+           onClick={enableAudio}
+           className="bg-primary/20 border border-primary/30 text-primary px-4 py-2.5 rounded-xl flex items-center justify-center gap-3 animate-pulse hover:bg-primary/30 transition-all"
+         >
+           <VolumeX size={18} />
+           <span className="text-[10px] font-black uppercase tracking-[0.2em]">Clique aqui para ativar o som de novos pedidos</span>
+         </button>
+       )}
+       {isAudioEnabled && (
+         <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 px-4 py-1.5 rounded-xl flex items-center justify-center gap-2">
+            <Volume2 size={12} />
+            <span className="text-[9px] font-bold uppercase tracking-widest">Som de alertas ativo</span>
+         </div>
+       )}
+
        {/* OVERLAY DE FEEDBACK UX */}
        {isGeneratingPdf && (
            <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center backdrop-blur-sm animate-in fade-in duration-200">

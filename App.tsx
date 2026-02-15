@@ -25,15 +25,27 @@ const SkeletonLoader = () => (
 const App: React.FC = () => {
   const [activePage, setActivePage] = useState<Page>(Page.HOME);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [orderType, setOrderType] = useState<OrderType>(OrderType.UNSET);
+  
+  // Estados com Persistência
+  const [orderType, setOrderType] = useState<OrderType>(() => {
+    return (localStorage.getItem('brutus_order_type') as OrderType) || OrderType.UNSET;
+  });
+  
+  const [isAdminMode, setIsAdminMode] = useState(() => {
+    return localStorage.getItem('brutus_admin_mode') === 'true';
+  });
+
+  const [userInfo, setUserInfo] = useState<UserInfo>(() => {
+    const saved = localStorage.getItem('brutus_user_info');
+    return saved ? JSON.parse(saved) : { name: '', whatsapp: '', address: '', reference: '', tableNumber: '' };
+  });
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [currentTenant, setCurrentTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
   const [isDarkMode, setIsDarkMode] = useState(false); 
-  const [isAdminMode, setIsAdminMode] = useState(false);
   const [orders, setOrders] = useState<Order[]>([]);
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
-  const [userInfo, setUserInfo] = useState<UserInfo>({ name: '', whatsapp: '', address: '', reference: '', tableNumber: '' });
   const [coupons, setCoupons] = useState<Coupon[]>([]);
 
   // Auth States
@@ -60,6 +72,20 @@ const App: React.FC = () => {
     "https://images.unsplash.com/photo-1593504049359-74330189a355?q=80&w=400&auto=format&fit=crop"
   ];
 
+  // Efeito para salvar persistência quando os estados mudam
+  useEffect(() => {
+    localStorage.setItem('brutus_order_type', orderType);
+  }, [orderType]);
+
+  useEffect(() => {
+    localStorage.setItem('brutus_admin_mode', String(isAdminMode));
+    if (isAdminMode) setActivePage(Page.DASHBOARD);
+  }, [isAdminMode]);
+
+  useEffect(() => {
+    localStorage.setItem('brutus_user_info', JSON.stringify(userInfo));
+  }, [userInfo]);
+
   const fetchInitialData = async () => {
     const params = new URLSearchParams(window.location.search);
     const storeSlug = params.get('loja') || 'churras-brutus';
@@ -69,6 +95,24 @@ const App: React.FC = () => {
       const { data: { session } } = await supabase.auth.getSession();
       const currentUser = session?.user ?? null;
       setUser(currentUser);
+
+      // Se houver usuário logado, tentar recuperar dados do perfil dele se o userInfo local estiver vazio
+      if (currentUser && !userInfo.name) {
+          const { data: customerData } = await supabase
+            .from('customers')
+            .select('*')
+            .eq('user_id', currentUser.id)
+            .maybeSingle();
+          
+          if (customerData) {
+              setUserInfo(prev => ({
+                  ...prev,
+                  name: customerData.name || prev.name,
+                  whatsapp: customerData.whatsapp || prev.whatsapp,
+                  address: customerData.address || prev.address
+              }));
+          }
+      }
 
       // 1. Tenant Data
       const { data: tenantData, error: tenantError } = await supabase
@@ -115,7 +159,7 @@ const App: React.FC = () => {
              isCombo: p.is_combo || false,
              isHighlighted: p.is_highlighted || false,
              availability: p.availability || 'available',
-             inventoryId: p.inventory_id,
+             inventory_id: p.inventory_id,
              moods: p.moods || [],
              affinityTags: p.affinity_tags || []
           }))
@@ -203,7 +247,7 @@ const App: React.FC = () => {
     const params = new URLSearchParams(window.location.search);
     const storeSlug = params.get('loja') || 'churras-brutus';
     
-    const ordersChannel = supabase.channel('orders_realtime')
+    const ordersChannel = supabase.channel('orders_realtime_app')
       .on('postgres_changes', { 
         event: '*', 
         schema: 'public', 
@@ -216,7 +260,12 @@ const App: React.FC = () => {
 
     const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
         setUser(session?.user ?? null);
-        if (event === 'SIGNED_IN') fetchInitialData(); 
+        if (event === 'SIGNED_IN') fetchInitialData();
+        if (event === 'SIGNED_OUT') {
+            setIsAdminMode(false);
+            setOrderType(OrderType.UNSET);
+            setActivePage(Page.HOME);
+        }
     });
 
     return () => { 
@@ -288,13 +337,6 @@ const App: React.FC = () => {
   const handlePlaceOrder = async (appliedCoupon?: Coupon) => {
     if (!currentTenant || cart.length === 0) return;
 
-    if (!user) {
-      setAuthTarget('client');
-      setPendingCoupon(appliedCoupon);
-      setShowAuthModal(true);
-      return;
-    }
-    
     const subtotal = cart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
     const deliveryFee = orderType === OrderType.DELIVERY ? currentTenant.deliveryFee : 0;
     const discount = (orderType !== OrderType.LOCAL && appliedCoupon) ? appliedCoupon.discountValue : 0;
@@ -319,7 +361,7 @@ const App: React.FC = () => {
             .maybeSingle();
 
         const customerData = {
-            name: userInfo.name || 'Cliente',
+            name: userInfo.name || 'Cliente Anônimo',
             whatsapp: cleanWhatsapp,
             address: userInfo.address || null,
             reference: userInfo.reference || null,
@@ -342,7 +384,7 @@ const App: React.FC = () => {
 
     const { data: orderResponse, error } = await supabase.from('orders').insert([{ 
       tenant_slug: 'churras-brutus', 
-      customer_name: userInfo.name || 'Cliente', 
+      customer_name: userInfo.name || 'Cliente Anônimo', 
       customer_whatsapp: userInfo.whatsapp || '', 
       items: cleanItems, 
       total: finalTotal, 
@@ -400,7 +442,7 @@ const App: React.FC = () => {
     <div className={`w-full ${isAdminMode ? '' : 'max-w-md mx-auto'} h-screen relative flex flex-col transition-all duration-500 ${isDarkMode ? 'bg-[#1a1a1a]' : 'bg-white'}`}>
       
       {showAuthModal && (
-        <div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm backdrop-blur-sm">
+        <div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm">
            <div className="relative w-full max-w-sm rounded-[32px] overflow-hidden shadow-2xl bg-white border border-gray-100">
               <button onClick={() => setShowAuthModal(false)} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-900"><X size={20} /></button>
               <div className="p-8">
@@ -454,7 +496,6 @@ const App: React.FC = () => {
           {/* CONTENT */}
           <div className="relative h-full flex flex-col items-center justify-between py-20 px-8 text-center">
             
-            {/* GATILHO SUTIL PARA ADMIN (TOP RIGHT) */}
             <button 
               onClick={() => { setAuthTarget('admin'); setShowAuthModal(true); }}
               className="absolute top-8 right-8 z-[110] p-4 text-white/5 hover:text-white/20 transition-all active:scale-95"
@@ -479,7 +520,6 @@ const App: React.FC = () => {
                 </div>
             </div>
 
-            {/* BOTÕES DE AÇÃO */}
             <div className="w-full space-y-4 max-w-[280px]">
               <button 
                 onClick={() => handleSelectOrderType(OrderType.LOCAL)} 
@@ -508,7 +548,6 @@ const App: React.FC = () => {
             {activePage === Page.FAVOURITE && <Favourite isDarkMode={isDarkMode} tenant={currentTenant} favorites={favorites} toggleFavorite={toggleFavorite} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.PROFILE && <Profile isDarkMode={isDarkMode} orderType={orderType} setOrderType={setOrderType} tenant={currentTenant} orders={orders} userInfo={userInfo} setUserInfo={setUserInfo} user={user} />}
             {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); fetchInitialData(); }} onUpdateInventory={handleUpdateInventory} onSaveCoupon={async (c) => { 
-                // Fix: Corrected camelCase property names on the Coupon object 'c'
                 const dbCoupon = {
                     id: c.id.startsWith('cp-') ? undefined : c.id,
                     tenant_slug: 'churras-brutus',
@@ -519,7 +558,7 @@ const App: React.FC = () => {
                     is_active: c.isActive,
                     user_id: c.userId || null,
                     customer_email: c.customerEmail || null,
-                    customer_phone: c.customerPhone || null
+                    customer_phone: c.customer_phone
                 };
                 await supabase.from('coupons').upsert(dbCoupon); 
                 fetchInitialData(); 
