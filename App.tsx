@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Page, Product, CartItem, OrderType, UserInfo, Tenant, Order, OrderStatus, InventoryItem, Coupon } from './types';
 import { DEFAULT_CATEGORIES } from './constants';
@@ -9,35 +10,9 @@ import Alerts from './pages/Alerts';
 import Favourite from './pages/Favourite';
 import Dashboard from './pages/Dashboard';
 import BottomNav from './components/BottomNav';
-// Added AlertCircle to lucide-react imports
-import { Bike, Utensils, Lock, X, Mail, Key, Loader2, Gift, ChevronRight, Shield, AlertCircle } from 'lucide-react';
+import { Bike, Utensils, Lock, X, Mail, Key, Loader2, Gift, ChevronRight, Shield } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { useFavorites } from './hooks/useFavorites';
-
-const getEnv = (key: string): string => {
-  // @ts-ignore
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
-    // @ts-ignore
-    return import.meta.env[key];
-  }
-  // @ts-ignore
-  if (typeof process !== 'undefined' && process.env && process.env[key]) {
-    // @ts-ignore
-    return process.env[key];
-  }
-  return '';
-};
-
-// Security check for Supabase configuration
-const SUPABASE_URL = getEnv('VITE_SUPABASE_URL');
-const SUPABASE_KEY = getEnv('VITE_SUPABASE_ANON_KEY');
-
-if (!SUPABASE_URL || !SUPABASE_KEY) {
-  console.warn(
-    "⚠️ ATENÇÃO: Configuração do Supabase (VITE_SUPABASE_URL ou VITE_SUPABASE_ANON_KEY) ausente.\n" +
-    "O aplicativo não conseguirá se conectar ao banco de dados até que as variáveis de ambiente sejam configuradas."
-  );
-}
 
 const SkeletonLoader = () => (
   <div className="w-full max-w-md mx-auto bg-white min-h-screen p-6 space-y-8 animate-pulse flex flex-col justify-center items-center">
@@ -86,12 +61,6 @@ const App: React.FC = () => {
   ];
 
   const fetchInitialData = async () => {
-    // Prevent fetching if Supabase is not configured
-    if (!getEnv('VITE_SUPABASE_URL')) {
-        setLoading(false);
-        return;
-    }
-
     const params = new URLSearchParams(window.location.search);
     const storeSlug = params.get('loja') || 'churras-brutus';
 
@@ -231,8 +200,6 @@ const App: React.FC = () => {
   useEffect(() => {
     fetchInitialData();
     
-    if (!getEnv('VITE_SUPABASE_URL')) return;
-
     const params = new URLSearchParams(window.location.search);
     const storeSlug = params.get('loja') || 'churras-brutus';
     
@@ -286,7 +253,6 @@ const App: React.FC = () => {
     setOrderType(type);
   };
 
-  // Fixed InventoryItem property access (camelCase vs snake_case)
   const handleUpdateInventory = async (newInventory: InventoryItem[]) => {
     setInventory(newInventory);
     if (!currentTenant) return;
@@ -427,24 +393,6 @@ const App: React.FC = () => {
     alert(`Pedido #${orderResponse.order_number} enviado com sucesso! Você pode acompanhar o status no seu perfil.`);
   };
 
-  // If Supabase is missing, we show an informative message but allow the skeletal structure to load
-  if (!getEnv('VITE_SUPABASE_URL')) {
-    return (
-        <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-20 h-20 bg-orange-100 text-orange-500 rounded-3xl flex items-center justify-center mb-6 shadow-xl">
-                <AlertCircle size={40} />
-            </div>
-            <h1 className="text-2xl font-black text-gray-900 mb-2 uppercase tracking-tight">Ambiente em Configuração</h1>
-            <p className="text-gray-500 text-sm max-w-xs mb-8">
-                As chaves do Supabase não foram encontradas. Por favor, configure as variáveis de ambiente <code className="bg-gray-200 px-1 rounded">VITE_SUPABASE_URL</code> e <code className="bg-gray-200 px-1 rounded">VITE_SUPABASE_ANON_KEY</code>.
-            </p>
-            <div className="flex gap-4">
-               <button onClick={() => window.location.reload()} className="bg-primary text-white px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-widest">Tentar Novamente</button>
-            </div>
-        </div>
-    );
-  }
-
   if (loading && !currentTenant) return <SkeletonLoader />;
   if (!currentTenant) return <div className="min-h-screen flex items-center justify-center text-gray-900 bg-white p-10 text-center font-bold">Loja não encontrada ou erro de conexão.</div>;
 
@@ -560,6 +508,7 @@ const App: React.FC = () => {
             {activePage === Page.FAVOURITE && <Favourite isDarkMode={isDarkMode} tenant={currentTenant} favorites={favorites} toggleFavorite={toggleFavorite} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.PROFILE && <Profile isDarkMode={isDarkMode} orderType={orderType} setOrderType={setOrderType} tenant={currentTenant} orders={orders} userInfo={userInfo} setUserInfo={setUserInfo} user={user} />}
             {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); fetchInitialData(); }} onUpdateInventory={handleUpdateInventory} onSaveCoupon={async (c) => { 
+                // Fix: Corrected camelCase property names on the Coupon object 'c'
                 const dbCoupon = {
                     id: c.id.startsWith('cp-') ? undefined : c.id,
                     tenant_slug: 'churras-brutus',
@@ -569,8 +518,8 @@ const App: React.FC = () => {
                     current_uses: c.currentUses,
                     is_active: c.isActive,
                     user_id: c.userId || null,
-                    customer_email: c.customer_email || null,
-                    customer_phone: c.customer_phone || null
+                    customer_email: c.customerEmail || null,
+                    customer_phone: c.customerPhone || null
                 };
                 await supabase.from('coupons').upsert(dbCoupon); 
                 fetchInitialData(); 
