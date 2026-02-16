@@ -1,8 +1,9 @@
 
-import React, { useEffect, useState } from 'react';
-import { ChevronLeft, Tag, ShoppingBag, Clock, Info, Bell, Ticket, Copy } from 'lucide-react';
+import React, { useEffect, useState, useMemo } from 'react';
+// Added Flame icon to imports
+import { ChevronLeft, Tag, ShoppingBag, Clock, Info, Bell, Ticket, Copy, Bike, PackageCheck, Flame, CheckCircle2 } from 'lucide-react';
 import { supabase } from '../supabaseClient';
-import { AppNotification, OrderType } from '../types';
+import { AppNotification, OrderType, Order } from '../types';
 
 interface AlertsProps {
   onBack: () => void;
@@ -12,15 +13,16 @@ interface AlertsProps {
 
 const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [activeOrders, setActiveOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetchData();
     
-    // Inscrever para mudanças em tempo real
-    const channel = supabase.channel('realtime_alerts')
+    const channel = supabase.channel('realtime_alerts_client')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'coupons' }, () => fetchData())
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'orders' }, () => fetchData())
       .subscribe();
 
     return () => {
@@ -42,11 +44,36 @@ const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
     try {
       const { data: { user } } = await supabase.auth.getUser();
       
-      // 1. Buscar Notificações (Sempre visíveis se is_active=true)
+      // 1. Buscar Pedidos Ativos para Acompanhamento
+      if (user) {
+        const { data: ordersData } = await supabase
+          .from('orders')
+          .select('*')
+          .eq('user_id', user.id)
+          .neq('status', 'finished')
+          .neq('status', 'canceled')
+          .order('created_at', { ascending: false });
+        
+        if (ordersData) {
+          setActiveOrders(ordersData.map((o: any) => ({
+            id: o.id,
+            orderNumber: o.order_number,
+            customerName: o.customer_name,
+            customerWhatsapp: o.customer_whatsapp,
+            items: o.items,
+            total: Number(o.total),
+            type: o.type,
+            status: o.status,
+            createdAt: new Date(o.created_at)
+          })));
+        }
+      }
+
+      // 2. Buscar Notificações
       let notifQuery = supabase
         .from('notifications')
         .select('*')
-        .eq('is_active', true) // Filtro adicionado conforme nova coluna
+        .eq('is_active', true)
         .order('created_at', { ascending: false });
 
       if (user) {
@@ -55,20 +82,14 @@ const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
         notifQuery = notifQuery.is('user_id', null);
       }
 
-      const { data: notifData, error: notifError } = await notifQuery;
-      
-      // Mapeia notificações mesmo se houver erro (retornando array vazio em caso de falha crítica)
+      const { data: notifData } = await notifQuery;
       const fetchedNotifications = (notifData || []).map(mapNotification);
-      if (notifError) console.error('Erro ao buscar notificações:', notifError);
 
-      // 2. Lógica de Cupons: 
-      // Mostra se for DELIVERY ou se o modo não foi definido (UNSET/null/undefined)
-      // Bloqueia APENAS se explicitamente for LOCAL
+      // 3. Lógica de Cupons
       let activeCouponsAsAlerts: any[] = [];
       const isActuallyLocal = orderType === OrderType.LOCAL;
       
       if (!isActuallyLocal) {
-          // Filtro de Exclusividade: Apenas cupons PÚBLICOS e ATIVOS
           const couponsQuery = supabase
             .from('coupons')
             .select('*')
@@ -77,13 +98,8 @@ const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
             .is('customer_email', null)
             .is('customer_phone', null);
 
-          const { data: couponRes, error: couponError } = await couponsQuery;
-          
-          // Debug logs
-          console.log('DEBUG Alertas - Modo Atual:', orderType || 'PADRÃO/DELIVERY');
-          console.log('DEBUG Alertas - Resposta Cupons Públicos:', couponRes);
-          
-          if (!couponError && couponRes) {
+          const { data: couponRes } = await couponsQuery;
+          if (couponRes) {
               activeCouponsAsAlerts = couponRes
                 .filter((c: any) => c.current_uses < c.max_uses)
                 .map((c: any) => ({
@@ -95,11 +111,8 @@ const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
                     createdAt: new Date().toISOString()
                 }));
           }
-      } else {
-          console.log('DEBUG Alertas - Modo Local: Cupons públicos ocultados por regra de negócio.');
       }
 
-      // Combina as fontes de dados de forma independente
       setNotifications([...activeCouponsAsAlerts, ...fetchedNotifications]);
 
     } catch (error) {
@@ -109,45 +122,33 @@ const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
     }
   };
 
-  const handleNotificationClick = (notif: AppNotification) => {
-    if (notif.id.startsWith('coupon-')) {
-        const code = notif.title.split(': ')[1];
-        if (code) {
-            navigator.clipboard.writeText(code);
-            alert(`Código ${code} copiado com sucesso!`);
-        }
-    } else {
-        markAsRead(notif.id);
+  const getStatusLabel = (status: string) => {
+    switch(status) {
+      case 'pending': return 'Pedido Recebido';
+      case 'preparing': return 'Na Brasa';
+      case 'ready_to_send': return 'Pronto para Sair';
+      case 'out_for_delivery': return 'Pedido a Caminho';
+      default: return 'Processando';
     }
   };
 
-  const markAsRead = async (id: string) => {
-    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-    if (!id.startsWith('coupon-')) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          await supabase.from('notifications').update({ is_read: true }).eq('id', id);
-        }
+  const getStatusIcon = (status: string) => {
+    switch(status) {
+      case 'out_for_delivery': return <Bike className="text-primary animate-bounce" />;
+      case 'preparing': return <Flame className="text-orange-500 animate-pulse" />;
+      case 'ready_to_send': return <PackageCheck className="text-emerald-500" />;
+      default: return <Clock className="text-blue-500" />;
     }
   };
 
-  const getIcon = (type: string) => {
-    switch (type) {
-      case 'promo': return <Ticket className="text-primary" />;
-      case 'order': return <ShoppingBag className="text-green-500" />;
-      case 'system': return <Info className="text-blue-500" />;
-      default: return <Bell className="text-gray-500" />;
+  const getStatusProgress = (status: string) => {
+    switch(status) {
+      case 'pending': return 25;
+      case 'preparing': return 50;
+      case 'ready_to_send': return 75;
+      case 'out_for_delivery': return 100;
+      default: return 10;
     }
-  };
-
-  const formatTime = (dateString: string) => {
-    if (dateString === new Date().toISOString()) return 'Agora';
-    const date = new Date(dateString);
-    const now = new Date();
-    const diff = now.getTime() - date.getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 60) return `${mins} min atrás`;
-    return `${Math.floor(mins / 60)}h atrás`;
   };
 
   return (
@@ -156,47 +157,85 @@ const Alerts: React.FC<AlertsProps> = ({ onBack, isDarkMode, orderType }) => {
         <button onClick={onBack} className={`w-10 h-10 rounded-full border flex items-center justify-center shadow-sm transition-all ${isDarkMode ? 'bg-[#1a1a1a] border-white/5 text-white' : 'bg-white border-gray-100 text-gray-700'}`}>
           <ChevronLeft size={20} />
         </button>
-        <h1 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-[#0F172A]'}`}>Notificações</h1>
+        <h1 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-[#0F172A]'}`}>Acompanhar Pedido</h1>
       </header>
 
-      <section className="px-6 space-y-4">
-        {loading ? (
-           <div className="text-center py-10 opacity-50 text-xs uppercase font-bold tracking-widest text-gray-400">Carregando informações...</div>
-        ) : notifications.length > 0 ? (
-          notifications.map((notif) => (
-            <div 
-              key={notif.id} 
-              onClick={() => handleNotificationClick(notif)}
-              className={`p-4 rounded-xl border flex gap-4 transition-all cursor-pointer active:scale-[0.98] ${isDarkMode ? 'bg-[#1a1a1a] border-white/5 shadow-black/20' : 'bg-white border-gray-100 shadow-sm'} ${!notif.isRead ? 'border-l-4 border-l-primary' : ''}`}
-            >
-              <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
-                {getIcon(notif.type)}
-              </div>
-              <div className="flex-1">
-                <div className="flex justify-between items-start mb-1">
-                  <h4 className={`font-bold text-[11px] uppercase tracking-tight ${isDarkMode ? 'text-gray-200' : 'text-gray-900'}`}>{notif.title}</h4>
-                  <div className="flex items-center gap-1 text-[9px] text-gray-500 font-bold uppercase"><Clock size={10} /> {notif.id.startsWith('coupon-') ? 'Válido' : formatTime(notif.createdAt)}</div>
+      <section className="px-6 space-y-6">
+        {/* Seção de Status de Pedido em Tempo Real */}
+        {activeOrders.length > 0 && (
+          <div className="space-y-4">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-primary">Status do Pedido</h3>
+            {activeOrders.map(order => (
+              <div key={order.id} className={`p-6 rounded-[32px] border-2 border-primary shadow-xl shadow-primary/10 relative overflow-hidden ${isDarkMode ? 'bg-primary/5' : 'bg-orange-50'}`}>
+                <div className="absolute top-0 right-0 p-4 opacity-10">
+                   {getStatusIcon(order.status)}
                 </div>
-                <p className={`text-[11px] font-medium leading-relaxed mb-2 ${isDarkMode ? 'text-gray-400 opacity-60' : 'text-gray-600'}`}>{notif.message}</p>
-                
-                {notif.id.startsWith('coupon-') && (
-                  <div className="flex items-center gap-1.5 text-primary text-[9px] font-black uppercase tracking-widest bg-primary/10 w-fit px-2 py-1 rounded">
-                    <Copy size={10} /> Copiar Código
+                <div className="relative z-10">
+                  <div className="flex justify-between items-center mb-4">
+                    <span className="text-primary font-black text-xl">#{order.orderNumber}</span>
+                    <div className={`px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest bg-white shadow-sm border border-primary/20 ${order.status === 'out_for_delivery' ? 'text-indigo-600 border-indigo-200' : 'text-primary'}`}>
+                      {getStatusLabel(order.status)}
+                    </div>
                   </div>
-                )}
+                  
+                  {order.status === 'out_for_delivery' && (
+                    <div className="mb-6 bg-white/50 backdrop-blur-md p-4 rounded-2xl border border-primary/20 flex items-center gap-4 animate-in zoom-in-95 duration-500">
+                      <div className="w-12 h-12 rounded-full bg-primary text-white flex items-center justify-center shadow-lg shadow-primary/30">
+                        <Bike size={24} />
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-black uppercase text-gray-900 leading-tight">O entregador saiu!</p>
+                        <p className="text-[9px] font-bold text-gray-500 uppercase tracking-tighter">Prepare a mesa, falta pouco 🔥</p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-3">
+                    <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden border border-gray-100 shadow-inner">
+                      <div 
+                        className="h-full bg-primary transition-all duration-1000 ease-out shadow-[0_0_10px_rgba(249,115,22,0.5)]" 
+                        style={{ width: `${getStatusProgress(order.status)}%` }} 
+                      />
+                    </div>
+                    <div className="flex justify-between px-1">
+                       <span className={`text-[7px] font-black uppercase ${getStatusProgress(order.status) >= 25 ? 'text-primary' : 'text-gray-400'}`}>Aceito</span>
+                       <span className={`text-[7px] font-black uppercase ${getStatusProgress(order.status) >= 50 ? 'text-primary' : 'text-gray-400'}`}>Preparo</span>
+                       <span className={`text-[7px] font-black uppercase ${getStatusProgress(order.status) >= 75 ? 'text-primary' : 'text-gray-400'}`}>Pronto</span>
+                       <span className={`text-[7px] font-black uppercase ${getStatusProgress(order.status) >= 100 ? 'text-primary' : 'text-gray-400'}`}>Entrega</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))
-        ) : (
-          <div className="text-center py-20 flex flex-col items-center opacity-40">
-            <Bell size={40} className="mb-4 text-gray-400" />
-            <p className={`text-[10px] font-bold uppercase tracking-widest text-center max-w-[200px] ${isDarkMode ? 'text-gray-500' : 'text-[#64748B]'}`}>
-              {orderType === OrderType.LOCAL 
-                ? 'Sem promoções ou avisos para consumo local' 
-                : 'Nenhuma notificação ou cupom disponível'}
-            </p>
+            ))}
           </div>
         )}
+
+        <div className="space-y-4">
+          <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-500">Promoções e Avisos</h3>
+          {loading ? (
+             <div className="text-center py-10 opacity-50 text-xs uppercase font-bold tracking-widest text-gray-400">Carregando informações...</div>
+          ) : notifications.length > 0 ? (
+            notifications.map((notif) => (
+              <div 
+                key={notif.id} 
+                className={`p-4 rounded-xl border flex gap-4 transition-all ${isDarkMode ? 'bg-[#1a1a1a] border-white/5 shadow-black/20' : 'bg-white border-gray-100 shadow-sm'}`}
+              >
+                <div className={`w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0 ${isDarkMode ? 'bg-white/5' : 'bg-gray-50'}`}>
+                  {notif.type === 'promo' ? <Ticket className="text-primary" /> : <Bell className="text-gray-500" />}
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-bold text-[11px] uppercase tracking-tight">{notif.title}</h4>
+                  <p className="text-[11px] font-medium leading-relaxed opacity-60">{notif.message}</p>
+                </div>
+              </div>
+            ))
+          ) : !activeOrders.length && (
+            <div className="text-center py-20 flex flex-col items-center opacity-40">
+              <Bell size={40} className="mb-4 text-gray-400" />
+              <p className="text-[10px] font-bold uppercase tracking-widest">Nada por aqui hoje</p>
+            </div>
+          )}
+        </div>
       </section>
     </div>
   );

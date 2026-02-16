@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Store, Upload, MapPin, Wallet, Printer, Check, Copy, Loader2, AlertCircle, Download, Clock, Calendar, X, Plus, Save } from 'lucide-react';
+import { Store, Upload, MapPin, Wallet, Printer, Check, Copy, Loader2, AlertCircle, Download, Clock, Calendar, X, Plus, Save, ShieldCheck, Lock, Share2 } from 'lucide-react';
 import { Tenant, PrinterSettings, BusinessHours } from '../../types';
 import { supabase } from '../../supabaseClient';
 
@@ -29,6 +29,10 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
   const [isSavingAll, setIsSavingAll] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   
+  // Security States
+  const [newPassword, setNewPassword] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
+
   // States for Holiday Logic
   const [newHolidayDate, setNewHolidayDate] = useState('');
 
@@ -36,7 +40,6 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
   const logoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    // Garante que todos os dias da semana existam no operatingHours
     const baseHours = tenant.operatingHours || {};
     const normalizedHours: Record<string, BusinessHours> = {};
     Object.keys(DAYS_MAP).forEach(key => {
@@ -45,7 +48,8 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
 
     setSettingsForm({
         ...tenant,
-        operatingHours: normalizedHours
+        operatingHours: normalizedHours,
+        deliveryTime: tenant.deliveryTime || "40-50"
     });
     
     fetchPrinterSettings();
@@ -76,46 +80,33 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
         .from('printer_settings')
         .select('*')
         .eq('tenant_slug', tenant.slug)
-        .maybeSingle(); // Busca segura
+        .maybeSingle();
       
       if (error) throw error;
-
       if (data) {
         setPrinterSettings({
            printerWidth: data.paper_width || 80,
            autoPrint: data.auto_print || false,
-           ipAddress: data.printer_name || '', // Mapeado para o campo interno ipAddress por compatibilidade
+           ipAddress: data.printer_name || '',
            headerText: data.header_text || '',
            footerText: data.footer_text || ''
         });
       } else {
-        // Fallback para valores padrão
         setPrinterSettings({ printerWidth: 80, autoPrint: false, headerText: '', footerText: '' });
       }
     } catch (err) {
-      console.log("Sem config de impressora encontrada ou erro, usando padrão.");
       setPrinterSettings({ printerWidth: 80, autoPrint: false, headerText: '', footerText: '' });
     }
   };
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
-    
-    const name = settingsForm.name || '';
-    const address = settingsForm.address || '';
-    const whatsapp = settingsForm.whatsapp || '';
-
-    if (!name.trim()) newErrors.name = "Nome da loja é obrigatório";
-    if (!address.trim()) newErrors.address = "Endereço é obrigatório";
-    
+    if (!settingsForm.name?.trim()) newErrors.name = "Nome da loja é obrigatório";
+    if (!settingsForm.address?.trim()) newErrors.address = "Endereço é obrigatório";
     const phoneRegex = /^[0-9]{10,13}$/;
-    if (!whatsapp.replace(/\D/g, '').match(phoneRegex)) {
+    if (!settingsForm.whatsapp.replace(/\D/g, '').match(phoneRegex)) {
         newErrors.whatsapp = "Digite apenas números (DDD + Número)";
     }
-
-    if (settingsForm.deliveryFee < 0) newErrors.deliveryFee = "Valor não pode ser negativo";
-    if (settingsForm.cardMachineFee < 0) newErrors.cardMachineFee = "Taxa não pode ser negativa";
-
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -126,18 +117,12 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
       const fileExt = file.name.split('.').pop();
       const fileName = `${tenant.slug}-logo-${Date.now()}.${fileExt}`;
       const filePath = `${fileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('images')
-        .upload(filePath, file);
-
+      const { error: uploadError } = await supabase.storage.from('images').upload(filePath, file);
       if (uploadError) throw uploadError;
-
       const { data } = supabase.storage.from('images').getPublicUrl(filePath);
       return data.publicUrl;
     } catch (error) {
-      console.error('Erro ao fazer upload da imagem:', error);
-      alert('Erro ao fazer upload da imagem. Certifique-se de que o bucket "images" está configurado como público no Supabase.');
+      alert('Erro no upload. Verifique as permissões de storage.');
       return null;
     } finally {
       setIsUploading(false);
@@ -148,21 +133,33 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
     const file = e.target.files?.[0];
     if (file) {
       const publicUrl = await uploadImageToStorage(file);
-      if (publicUrl) {
-        setSettingsForm({ ...settingsForm, logo: publicUrl });
-      }
+      if (publicUrl) setSettingsForm({ ...settingsForm, logo: publicUrl });
+    }
+  };
+
+  const handleUpdatePassword = async () => {
+    if (newPassword.length < 6) {
+        alert("A senha deve ter no mínimo 6 caracteres.");
+        return;
+    }
+    setIsUpdatingPassword(true);
+    try {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) throw error;
+        alert("Senha atualizada com sucesso!");
+        setNewPassword('');
+    } catch (err: any) {
+        alert("Erro ao atualizar senha: " + err.message);
+    } finally {
+        setIsUpdatingPassword(false);
     }
   };
 
   const handleSaveSettings = async () => {
-    if (!validateForm()) {
-        alert("Por favor, corrija os erros no formulário antes de salvar.");
-        return;
-    }
-
+    if (!validateForm()) return;
     setIsSavingAll(true);
     try {
-        const { error: tenantError } = await supabase.from('tenants').upsert({
+        await supabase.from('tenants').upsert({
            slug: tenant.slug,
            name: settingsForm.name,
            logo: settingsForm.logo,
@@ -172,15 +169,13 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
            pix_key: settingsForm.pixKey,
            payment_link: settingsForm.paymentLink,
            delivery_fee: settingsForm.deliveryFee,
+           delivery_time: settingsForm.deliveryTime,
            card_machine_fee: settingsForm.cardMachineFee,
            operating_hours: settingsForm.operatingHours,
            holiday_closures: settingsForm.holidayClosures
         });
 
-        if (tenantError) throw tenantError;
-
-        // Salvamento com os nomes de colunas atualizados no banco
-        const { error: printerError } = await supabase.from('printer_settings').upsert({
+        await supabase.from('printer_settings').upsert({
            tenant_slug: tenant.slug,
            paper_width: printerSettings.printerWidth,
            auto_print: printerSettings.autoPrint,
@@ -189,13 +184,10 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
            footer_text: printerSettings.footerText || null
         }, { onConflict: 'tenant_slug' });
 
-        if (printerError) throw printerError;
-
         onUpdateTenant(settingsForm);
-        alert('Configurações salvas com sucesso no banco de dados!');
+        alert('Configurações salvas!');
     } catch (err: any) {
-        console.error("Erro ao salvar configurações:", err);
-        alert("Erro ao salvar no banco de dados: " + (err.message || "Tente novamente."));
+        alert("Erro ao salvar: " + err.message);
     } finally {
         setIsSavingAll(false);
     }
@@ -208,35 +200,71 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
     setTimeout(() => setCopiedLink(false), 2000);
   };
 
-  const handleDownloadQR = () => {
+  const handlePrintQRCode = () => {
+    const qrImage = qrcodeContainerRef.current?.querySelector('img')?.src;
     const canvas = qrcodeContainerRef.current?.querySelector('canvas');
-    const img = qrcodeContainerRef.current?.querySelector('img');
-    let url = '';
+    const finalImage = qrImage || (canvas ? canvas.toDataURL("image/png") : null);
 
-    if (canvas) {
-        url = canvas.toDataURL("image/png");
-    } else if (img) {
-        url = img.src;
+    if (!finalImage) {
+        alert("Erro ao gerar imagem do QR Code para impressão.");
+        return;
     }
 
-    if (url) {
-        const link = document.createElement('a');
-        link.download = `qrcode-${tenant.slug}.png`;
-        link.href = url;
-        link.click();
-    }
+    const printWindow = window.open('', '_blank', 'width=600,height=800');
+    if (!printWindow) return;
+
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>QR Code - ${tenant.name}</title>
+          <style>
+            @page { margin: 0; }
+            body { 
+              display: flex; 
+              flex-direction: column; 
+              align-items: center; 
+              justify-content: center; 
+              height: 100vh; 
+              margin: 0; 
+              font-family: 'Inter', sans-serif;
+              text-align: center;
+              color: #000;
+              padding: 20px;
+            }
+            .container {
+              border: 4px solid #000;
+              padding: 40px;
+              border-radius: 40px;
+              display: flex;
+              flex-direction: column;
+              align-items: center;
+            }
+            img { width: 350px; height: 350px; margin: 30px 0; }
+            h1 { font-size: 32px; font-weight: 900; text-transform: uppercase; margin: 0; letter-spacing: -1px; }
+            p { font-size: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 2px; color: #444; margin-top: 10px; }
+            .url { font-size: 10px; color: #888; margin-top: 20px; font-family: monospace; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>${tenant.name}</h1>
+            <p>Acesse nosso cardápio</p>
+            <img src="${finalImage}" />
+            <div class="url">${window.location.origin}${window.location.pathname}?loja=${tenant.slug}</div>
+          </div>
+          <script>window.onload = () => { window.print(); setTimeout(() => window.close(), 1000); }</script>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
   };
 
-  // Operating Hours Handlers com acesso seguro
   const handleDayToggle = (day: string) => {
       setSettingsForm(prev => {
           const currentHours = prev.operatingHours?.[day] || { ...DEFAULT_HOURS };
           return {
               ...prev,
-              operatingHours: {
-                  ...(prev.operatingHours || {}),
-                  [day]: { ...currentHours, isOpen: !currentHours.isOpen }
-              }
+              operatingHours: { ...(prev.operatingHours || {}), [day]: { ...currentHours, isOpen: !currentHours.isOpen } }
           };
       });
   };
@@ -246,15 +274,11 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
           const currentHours = prev.operatingHours?.[day] || { ...DEFAULT_HOURS };
           return {
               ...prev,
-              operatingHours: {
-                  ...(prev.operatingHours || {}),
-                  [day]: { ...currentHours, [field]: value }
-              }
+              operatingHours: { ...(prev.operatingHours || {}), [day]: { ...currentHours, [field]: value } }
           };
       });
   };
 
-  // Holiday Handlers
   const addHoliday = () => {
       if (!newHolidayDate) return;
       const currentHolidays = settingsForm.holidayClosures || [];
@@ -273,70 +297,56 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
            {/* LEFT COLUMN */}
            <div className="space-y-6">
-              {/* Identity */}
               <div className="bg-[#161618] border border-white/5 rounded-2xl p-6">
                  <h3 className="text-white font-bold mb-4 flex items-center gap-2 uppercase tracking-widest text-xs"><Store size={14} className="text-primary"/> Identidade da Loja</h3>
-                 
                  <div className="space-y-4">
                     <div className="flex items-center gap-4">
                        <div className="w-20 h-20 bg-black/50 rounded-xl border border-white/10 flex items-center justify-center overflow-hidden relative group">
                           <img src={settingsForm.logo} className={`w-full h-full object-cover transition-opacity ${isUploading ? 'opacity-30' : 'opacity-100'}`} />
-                          
-                          {isUploading && (
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <Loader2 size={24} className="text-primary animate-spin" />
-                            </div>
-                          )}
-
-                          {!isUploading && (
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer">
-                                <Upload size={20} className="text-white" />
-                                <input type="file" ref={logoInputRef} onChange={handleLogoUpload} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" />
-                            </div>
-                          )}
+                          {isUploading ? <div className="absolute inset-0 flex items-center justify-center"><Loader2 size={24} className="text-primary animate-spin" /></div> : <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity cursor-pointer"><Upload size={20} className="text-white" /><input type="file" ref={logoInputRef} onChange={handleLogoUpload} className="absolute inset-0 opacity-0 cursor-pointer" accept="image/*" /></div>}
                        </div>
                        <div className="flex-1 space-y-2">
-                          <input 
-                            type="text" 
-                            value={settingsForm.name} 
-                            onChange={e => { setSettingsForm({...settingsForm, name: e.target.value}); setErrors({...errors, name: ''}); }} 
-                            className={`w-full bg-[#09090B] border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${errors.name ? 'border-red-500/50' : 'border-white/10'}`} 
-                            placeholder="Nome da Loja" 
-                          />
-                          {errors.name && <span className="text-red-500 text-[9px] flex items-center gap-1"><AlertCircle size={8}/> {errors.name}</span>}
-                          
-                          <input type="text" value={settingsForm.slug} disabled className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-500 cursor-not-allowed" title="Slug não pode ser alterado" />
+                          <input type="text" value={settingsForm.name} onChange={e => { setSettingsForm({...settingsForm, name: e.target.value}); setErrors({...errors, name: ''}); }} className={`w-full bg-[#09090B] border rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-primary/50 ${errors.name ? 'border-red-500/50' : 'border-white/10'}`} placeholder="Nome da Loja" />
+                          <input type="text" value={settingsForm.slug} disabled className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-gray-500 cursor-not-allowed" />
                        </div>
                     </div>
                  </div>
               </div>
 
-              {/* Address */}
               <div className="bg-[#161618] border border-white/5 rounded-2xl p-6">
                  <h3 className="text-white font-bold mb-4 flex items-center gap-2 uppercase tracking-widest text-xs"><MapPin size={14} className="text-primary"/> Endereço & Contato</h3>
                  <div className="space-y-3">
-                    <div>
-                        <input 
-                            type="text" 
-                            value={settingsForm.address} 
-                            onChange={e => { setSettingsForm({...settingsForm, address: e.target.value}); setErrors({...errors, address: ''}); }} 
-                            className={`w-full bg-[#09090B] border rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50 ${errors.address ? 'border-red-500/50' : 'border-white/10'}`} 
-                            placeholder="Endereço Completo" 
-                        />
-                        {errors.address && <span className="text-red-500 text-[9px] flex items-center gap-1 mt-1"><AlertCircle size={8}/> {errors.address}</span>}
-                    </div>
+                    <input type="text" value={settingsForm.address} onChange={e => setSettingsForm({...settingsForm, address: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none" placeholder="Endereço" />
                     <div className="grid grid-cols-2 gap-3">
-                       <div>
-                           <input 
-                                type="text" 
-                                value={settingsForm.whatsapp} 
-                                onChange={e => { setSettingsForm({...settingsForm, whatsapp: e.target.value}); setErrors({...errors, whatsapp: ''}); }} 
-                                className={`w-full bg-[#09090B] border rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50 ${errors.whatsapp ? 'border-red-500/50' : 'border-white/10'}`} 
-                                placeholder="WhatsApp (apenas números)" 
-                           />
-                           {errors.whatsapp && <span className="text-red-500 text-[9px] flex items-center gap-1 mt-1"><AlertCircle size={8}/> {errors.whatsapp}</span>}
+                       <input type="text" value={settingsForm.whatsapp} onChange={e => setSettingsForm({...settingsForm, whatsapp: e.target.value})} className="bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" placeholder="WhatsApp" />
+                       <input type="text" value={settingsForm.instagram} onChange={e => setSettingsForm({...settingsForm, instagram: e.target.value})} className="bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" placeholder="@instagram" />
+                    </div>
+                 </div>
+              </div>
+
+              {/* SEÇÃO DE SEGURANÇA / TROCA DE SENHA */}
+              <div className="bg-[#161618] border border-white/5 rounded-2xl p-6">
+                 <h3 className="text-white font-bold mb-4 flex items-center gap-2 uppercase tracking-widest text-xs"><ShieldCheck size={14} className="text-primary"/> Segurança Admin</h3>
+                 <div className="space-y-4">
+                    <p className="text-[10px] text-gray-500 uppercase font-bold">Trocar Senha de Acesso</p>
+                    <div className="flex gap-2">
+                       <div className="relative flex-1">
+                          <Lock size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                          <input 
+                            type="password" 
+                            value={newPassword} 
+                            onChange={e => setNewPassword(e.target.value)} 
+                            className="w-full bg-[#09090B] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-xs text-white outline-none focus:border-primary/50" 
+                            placeholder="Nova senha admin" 
+                          />
                        </div>
-                       <input type="text" value={settingsForm.instagram} onChange={e => setSettingsForm({...settingsForm, instagram: e.target.value})} className="bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50" placeholder="@instagram" />
+                       <button 
+                         onClick={handleUpdatePassword}
+                         disabled={isUpdatingPassword || !newPassword}
+                         className="bg-primary/10 text-primary border border-primary/20 px-4 py-2 rounded-lg text-xs font-bold uppercase hover:bg-primary/20 transition-all disabled:opacity-30"
+                       >
+                          {isUpdatingPassword ? <Loader2 size={14} className="animate-spin" /> : 'Atualizar'}
+                       </button>
                     </div>
                  </div>
               </div>
@@ -344,181 +354,107 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
 
            {/* RIGHT COLUMN */}
            <div className="space-y-6">
-              {/* Finance */}
               <div className="bg-[#161618] border border-white/5 rounded-2xl p-6">
-                 <h3 className="text-white font-bold mb-4 flex items-center gap-2 uppercase tracking-widest text-xs"><Wallet size={14} className="text-primary"/> Financeiro</h3>
+                 <h3 className="text-white font-bold mb-4 flex items-center gap-2 uppercase tracking-widest text-xs"><Wallet size={14} className="text-primary"/> Logística & Financeiro</h3>
                  <div className="space-y-3">
-                    <div className="space-y-1">
-                       <label className="text-[10px] font-bold text-gray-500 uppercase">Chave Pix</label>
-                       <input type="text" value={settingsForm.pixKey} onChange={e => setSettingsForm({...settingsForm, pixKey: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50" />
-                    </div>
-                    <div className="space-y-1">
-                       <label className="text-[10px] font-bold text-gray-500 uppercase">Link de Pagamento (Máquina de Cartão)</label>
-                       <input 
-                         type="text" 
-                         value={settingsForm.paymentLink || ''} 
-                         onChange={e => setSettingsForm({...settingsForm, paymentLink: e.target.value})} 
-                         className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50" 
-                         placeholder="https://pay.sumup.io/..."
-                       />
-                    </div>
                     <div className="grid grid-cols-2 gap-3">
                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-500 uppercase">Taxa Entrega (R$)</label>
-                          <input 
-                            type="number" 
-                            step="0.50" 
-                            value={settingsForm.deliveryFee} 
-                            onChange={e => { setSettingsForm({...settingsForm, deliveryFee: parseFloat(e.target.value)}); setErrors({...errors, deliveryFee: ''}); }} 
-                            className={`w-full bg-[#09090B] border rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50 ${errors.deliveryFee ? 'border-red-500/50' : 'border-white/10'}`} 
-                          />
-                          {errors.deliveryFee && <span className="text-red-500 text-[9px]">{errors.deliveryFee}</span>}
+                          <label className="text-[10px] font-bold text-gray-500 uppercase">Tempo de Entrega (Min)</label>
+                          <input type="text" placeholder="Ex: 40-50" value={settingsForm.deliveryTime || ''} onChange={e => setSettingsForm({...settingsForm, deliveryTime: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
                        </div>
                        <div className="space-y-1">
-                          <label className="text-[10px] font-bold text-gray-500 uppercase">Taxa Maquininha (%)</label>
-                          <input 
-                            type="number" 
-                            step="0.1" 
-                            value={settingsForm.cardMachineFee} 
-                            onChange={e => { setSettingsForm({...settingsForm, cardMachineFee: parseFloat(e.target.value)}); setErrors({...errors, cardMachineFee: ''}); }} 
-                            className={`w-full bg-[#09090B] border rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-primary/50 ${errors.cardMachineFee ? 'border-red-500/50' : 'border-white/10'}`} 
-                          />
-                          {errors.cardMachineFee && <span className="text-red-500 text-[9px]">{errors.cardMachineFee}</span>}
+                          <label className="text-[10px] font-bold text-gray-500 uppercase">Taxa Entrega (R$)</label>
+                          <input type="number" value={settingsForm.deliveryFee} onChange={e => setSettingsForm({...settingsForm, deliveryFee: parseFloat(e.target.value)})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
                        </div>
+                    </div>
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-bold text-gray-500 uppercase">Chave Pix</label>
+                       <input type="text" value={settingsForm.pixKey} onChange={e => setSettingsForm({...settingsForm, pixKey: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
+                    </div>
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-bold text-gray-500 uppercase">Taxa Maquininha (%)</label>
+                       <input type="number" value={settingsForm.cardMachineFee} onChange={e => setSettingsForm({...settingsForm, cardMachineFee: parseFloat(e.target.value)})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
                     </div>
                  </div>
               </div>
 
-              {/* Printer */}
-              <div className="bg-[#161618] border border-white/5 rounded-2xl p-6">
-                 <h3 className="text-white font-bold mb-4 flex items-center gap-2 uppercase tracking-widest text-xs"><Printer size={14} className="text-primary"/> Impressora Térmica</h3>
-                 <div className="space-y-3">
-                     <div className="flex items-center gap-4 mb-2">
-                         <label className="flex items-center gap-2 cursor-pointer">
-                             <input type="radio" name="width" checked={printerSettings.printerWidth === 58} onChange={() => setPrinterSettings({...printerSettings, printerWidth: 58})} className="accent-primary" />
-                             <span className="text-xs text-gray-300">58mm</span>
-                         </label>
-                         <label className="flex items-center gap-2 cursor-pointer">
-                             <input type="radio" name="width" checked={printerSettings.printerWidth === 80} onChange={() => setPrinterSettings({...printerSettings, printerWidth: 80})} className="accent-primary" />
-                             <span className="text-xs text-gray-300">80mm</span>
-                         </label>
-                     </div>
-                     <div className="flex items-center justify-between p-3 bg-[#09090B] rounded-lg border border-white/5">
-                         <span className="text-xs font-bold text-gray-400">Impressão Automática</span>
-                         <label className="relative inline-flex items-center cursor-pointer">
-                            <input type="checkbox" checked={printerSettings.autoPrint} onChange={e => setPrinterSettings({...printerSettings, autoPrint: e.target.checked})} className="sr-only peer" />
-                            <div className="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
-                         </label>
-                     </div>
+              {/* CARD DE COMPARTILHAMENTO / QR CODE */}
+              <div className="bg-[#161618] border border-white/5 rounded-3xl p-6 flex flex-col sm:flex-row gap-6 items-center shadow-2xl relative overflow-hidden">
+                 <div className="absolute inset-0 bg-primary/5 pointer-events-none" />
+                 
+                 <div className="flex-shrink-0 group relative">
+                    <div className="p-4 bg-white rounded-3xl shadow-xl transition-transform group-hover:scale-105 duration-500" ref={qrcodeContainerRef} />
+                    <button 
+                      onClick={handlePrintQRCode}
+                      className="absolute -top-3 -right-3 bg-primary text-white p-3 rounded-2xl shadow-2xl hover:bg-orange-600 transition-all active:scale-90 z-10"
+                      title="Imprimir QR Code"
+                    >
+                      <Printer size={20} />
+                    </button>
                  </div>
-              </div>
 
-              {/* QR Code */}
-              <div className="bg-[#161618] border border-white/5 rounded-2xl p-6 flex gap-4 items-center">
-                 <div className="p-2 bg-white rounded-xl" ref={qrcodeContainerRef} />
-                 <div className="flex-1 space-y-3">
-                    <h4 className="text-sm font-bold text-white mb-1">Link do Cardápio</h4>
-                    <input 
-                        type="text" 
-                        readOnly 
-                        value={`${window.location.origin}${window.location.pathname}?loja=${tenant.slug}`} 
-                        className="w-full bg-[#09090B] border border-white/10 rounded-lg px-2 py-1.5 text-[10px] text-gray-400 font-mono"
-                    />
-                    <div className="flex gap-2">
-                        <button onClick={handleCopyMenuLink} className="flex-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
-                           {copiedLink ? <Check size={12}/> : <Copy size={12}/>} {copiedLink ? 'Copiado!' : 'Copiar'}
+                 <div className="flex-1 w-full space-y-4 relative z-10 text-center sm:text-left">
+                    <div>
+                       <h4 className="text-xs font-black uppercase tracking-[0.2em] text-gray-500 mb-1">Menu Digital Ativo</h4>
+                       <p className="text-sm font-bold text-white mb-4">Link do Cardápio</p>
+                    </div>
+                    
+                    <div className="space-y-3">
+                        <button 
+                          onClick={handleCopyMenuLink} 
+                          className="w-full h-12 bg-white/5 hover:bg-white/10 text-primary border border-primary/30 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-3 active:scale-95"
+                        >
+                           {copiedLink ? <Check size={16} /> : <Copy size={16}/>} 
+                           {copiedLink ? 'Link Copiado!' : 'Copiar Link'}
                         </button>
-                        <button onClick={handleDownloadQR} className="flex-1 bg-white/5 hover:bg-white/10 text-white border border-white/10 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2">
-                           <Download size={12}/> Baixar QR
-                        </button>
+                        
+                        <div className="flex gap-2">
+                           <button 
+                             onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(`Acesse nosso cardápio: ${window.location.origin}${window.location.pathname}?loja=${tenant.slug}`)}`, '_blank')}
+                             className="flex-1 h-12 bg-[#25D366]/10 hover:bg-[#25D366]/20 text-[#25D366] border border-[#25D366]/30 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                           >
+                             <Share2 size={14} /> WhatsApp
+                           </button>
+                           <button 
+                             onClick={handlePrintQRCode}
+                             className="flex-1 h-12 bg-white/5 hover:bg-white/10 text-white border border-white/10 rounded-2xl text-[9px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"
+                           >
+                             <Printer size={14} /> Imprimir QR
+                           </button>
+                        </div>
                     </div>
                  </div>
               </div>
            </div>
        </div>
 
-       {/* FULL WIDTH - HORÁRIOS */}
        <div className="bg-[#161618] border border-white/5 rounded-2xl p-6">
            <h3 className="text-white font-bold mb-6 flex items-center gap-2 uppercase tracking-widest text-xs"><Clock size={14} className="text-primary"/> Horários e Funcionamento</h3>
-           
            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-               {/* Dias da Semana */}
                <div className="lg:col-span-2 space-y-2">
-                   <div className="grid grid-cols-4 gap-2 mb-2 px-2 text-[10px] font-bold uppercase text-gray-500 tracking-widest">
-                       <div className="col-span-1">Dia</div>
-                       <div className="text-center">Abertura</div>
-                       <div className="text-center">Fechamento</div>
-                       <div className="text-center">Status</div>
-                   </div>
                    {Object.entries(DAYS_MAP).map(([key, label]) => {
                        const hours = settingsForm.operatingHours?.[key] || { ...DEFAULT_HOURS };
                        return (
                            <div key={key} className={`grid grid-cols-4 gap-2 items-center p-2 rounded-lg border transition-all ${hours.isOpen ? 'bg-[#09090B] border-white/5' : 'bg-red-500/5 border-red-500/10 opacity-60'}`}>
                                <span className="text-xs font-bold text-white">{label}</span>
-                               <input 
-                                   type="time" 
-                                   value={hours.open} 
-                                   onChange={(e) => handleTimeChange(key, 'open', e.target.value)}
-                                   disabled={!hours.isOpen}
-                                   className="bg-[#161618] border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:border-primary/50 outline-none"
-                               />
-                               <input 
-                                   type="time" 
-                                   value={hours.close} 
-                                   onChange={(e) => handleTimeChange(key, 'close', e.target.value)}
-                                   disabled={!hours.isOpen}
-                                   className="bg-[#161618] border border-white/10 rounded px-2 py-1 text-xs text-white text-center focus:border-primary/50 outline-none"
-                               />
-                               <div className="flex justify-center">
-                                   <label className="relative inline-flex items-center cursor-pointer">
-                                       <input type="checkbox" checked={hours.isOpen} onChange={() => handleDayToggle(key)} className="sr-only peer" />
-                                       <div className="w-8 h-4 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-green-500"></div>
-                                   </label>
-                               </div>
+                               <input type="time" value={hours.open} onChange={(e) => handleTimeChange(key, 'open', e.target.value)} disabled={!hours.isOpen} className="bg-[#161618] border border-white/10 rounded px-2 py-1 text-xs text-white text-center" />
+                               <input type="time" value={hours.close} onChange={(e) => handleTimeChange(key, 'close', e.target.value)} disabled={!hours.isOpen} className="bg-[#161618] border border-white/10 rounded px-2 py-1 text-xs text-white text-center" />
+                               <div className="flex justify-center"><label className="relative inline-flex items-center cursor-pointer"><input type="checkbox" checked={hours.isOpen} onChange={() => handleDayToggle(key)} className="sr-only peer" /><div className="w-8 h-4 bg-gray-700 rounded-full peer peer-checked:bg-green-500"></div></label></div>
                            </div>
                        );
                    })}
                </div>
-
-               {/* Folgas / Feriados */}
                <div className="bg-[#09090B] border border-white/5 rounded-xl p-4">
-                   <h4 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Calendar size={14} className="text-gray-400" /> Fechar em Datas Específicas</h4>
-                   <div className="flex gap-2 mb-4">
-                       <input 
-                           type="date" 
-                           value={newHolidayDate} 
-                           onChange={(e) => setNewHolidayDate(e.target.value)}
-                           className="flex-1 bg-[#161618] border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:border-primary/50 outline-none"
-                       />
-                       <button onClick={addHoliday} className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg transition-colors">
-                           <Plus size={16} />
-                       </button>
-                   </div>
-                   
-                   <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
-                       {(settingsForm.holidayClosures || []).length === 0 && (
-                           <p className="text-[10px] text-gray-600 text-center py-4">Nenhuma data fechada.</p>
-                       )}
-                       {(settingsForm.holidayClosures || []).map(date => (
-                           <div key={date} className="flex justify-between items-center bg-[#161618] border border-white/5 p-2 rounded-lg">
-                               <span className="text-xs text-gray-300 font-mono">{new Date(date).toLocaleDateString('pt-BR')}</span>
-                               <button onClick={() => removeHoliday(date)} className="text-gray-500 hover:text-red-500 transition-colors">
-                                   <X size={14} />
-                               </button>
-                           </div>
-                       ))}
-                   </div>
+                   <h4 className="text-xs font-bold text-white mb-3 flex items-center gap-2"><Calendar size={14} className="text-gray-400" /> Fechar em Datas</h4>
+                   <div className="flex gap-2 mb-4"><input type="date" value={newHolidayDate} onChange={(e) => setNewHolidayDate(e.target.value)} className="flex-1 bg-[#161618] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" /><button onClick={addHoliday} className="bg-white/10 hover:bg-white/20 text-white p-2 rounded-lg"><Plus size={16} /></button></div>
+                   <div className="space-y-2 max-h-[200px] overflow-y-auto">{(settingsForm.holidayClosures || []).map(date => (<div key={date} className="flex justify-between items-center bg-[#161618] border border-white/5 p-2 rounded-lg"><span className="text-xs text-gray-300">{new Date(date).toLocaleDateString('pt-BR')}</span><button onClick={() => removeHoliday(date)} className="text-gray-500 hover:text-red-500"><X size={14} /></button></div>))}</div>
                </div>
            </div>
        </div>
 
-       <button 
-         onClick={handleSaveSettings} 
-         disabled={isUploading || isSavingAll}
-         className={`w-full bg-primary hover:bg-orange-600 text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg shadow-primary/20 flex items-center justify-center gap-2 ${ (isUploading || isSavingAll) ? 'opacity-50 cursor-not-allowed' : ''}`}
-       >
-          { (isUploading || isSavingAll) ? <Loader2 size={18} className="animate-spin" /> : <Save size={18}/> }
-          { (isUploading || isSavingAll) ? 'Salvando Alterações...' : 'Salvar Todas Alterações no Banco' }
+       <button onClick={handleSaveSettings} disabled={isSavingAll} className="w-full bg-primary hover:bg-orange-600 text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest transition-all shadow-lg flex items-center justify-center gap-2">
+          {isSavingAll ? <Loader2 size={18} className="animate-spin" /> : <Save size={18}/>}
+          {isSavingAll ? 'Salvando...' : 'Salvar Todas Alterações'}
        </button>
     </div>
   );

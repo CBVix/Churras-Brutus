@@ -90,6 +90,7 @@ export interface Tenant {
   pixKey: string;      // No banco: pix_key
   paymentLink?: string; // No banco: payment_link
   deliveryFee: number;  // No banco: delivery_fee
+  deliveryTime?: string; // No banco: delivery_time (ex: "40-50")
   themeColor: string;
   products: Product[];
   categories: Category[];
@@ -108,7 +109,7 @@ export interface CartItem extends Product {
   itemObservation?: string;
 }
 
-export type OrderStatus = 'pending' | 'preparing' | 'finished' | 'canceled' | 'ready_to_send';
+export type OrderStatus = 'pending' | 'preparing' | 'finished' | 'canceled' | 'ready_to_send' | 'out_for_delivery';
 
 export interface Order {
   id: string;
