@@ -114,15 +114,12 @@ const App: React.FC = () => {
           categories: (tenantData.categories && tenantData.categories.length > 0) ? tenantData.categories : DEFAULT_CATEGORIES,
           products: []
         };
-        
-        // Busca produtos incluindo o campo 'sides' (acompanhamentos)
         const { data: productsData } = await supabase.from('products').select('*').eq('tenant_slug', storeSlug);
         mappedTenant.products = (productsData || []).map((p: any) => ({
              id: p.id, name: p.name, price: Number(p.price), rating: Number(p.rating || 5), reviews: p.reviews || '0',
              image: p.image, category: p.category, prepTime: p.prep_time, description: p.description,
              isVegan: p.is_vegan, isCombo: p.is_combo, isHighlighted: p.is_highlighted, availability: p.availability,
-             inventoryId: p.inventory_id,
-             sides: p.sides || [] // ESSENCIAL: Inclusão dos acompanhamentos no mapeamento
+             inventoryId: p.inventory_id
         }));
         setCurrentTenant(mappedTenant);
         document.documentElement.style.setProperty('--primary-color', mappedTenant.themeColor);
@@ -162,25 +159,13 @@ const App: React.FC = () => {
   useEffect(() => {
     fetchInitialData();
     
+    // Realtime tenant update (for delivery time)
     const storeSlug = new URLSearchParams(window.location.search).get('loja') || 'churras-brutus';
-    
-    // Realtime tenant update
-    const tenantChannel = supabase.channel(`tenant_updates_${storeSlug}`)
+    const channel = supabase.channel(`tenant_updates_${storeSlug}`)
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tenants', filter: `slug=eq.${storeSlug}` }, () => fetchInitialData())
       .subscribe();
 
-    // Realtime products update (PARA ACOMPANHAMENTOS E NOVOS ITENS)
-    const productsChannel = supabase.channel(`products_updates_${storeSlug}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `tenant_slug=eq.${storeSlug}` }, () => {
-        console.log("Produtos atualizados em tempo real!");
-        fetchInitialData();
-      })
-      .subscribe();
-
-    return () => { 
-      supabase.removeChannel(tenantChannel); 
-      supabase.removeChannel(productsChannel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [isAdminMode]);
 
   const handleSelectOrderType = (type: OrderType) => {
@@ -193,10 +178,7 @@ const App: React.FC = () => {
 
   const handlePlaceOrder = async (coupon?: Coupon) => {
     if (!currentTenant || cart.length === 0) return;
-    const subtotal = cart.reduce((acc, item) => {
-        const sidePrices = (item.selectedSides || []).reduce((sAcc, s) => sAcc + s.price, 0);
-        return acc + (item.price + sidePrices) * item.quantity;
-    }, 0);
+    const subtotal = cart.reduce((acc, item) => acc + item.price * item.quantity, 0);
     const deliveryFee = orderType === OrderType.DELIVERY ? currentTenant.deliveryFee : 0;
     const discountValue = coupon ? coupon.discountValue : 0;
     const totalValue = Math.max(0, subtotal + deliveryFee - discountValue);
@@ -340,7 +322,7 @@ const App: React.FC = () => {
       {(orderType !== OrderType.UNSET || isAdminMode) && (
         <main className="flex-1 overflow-y-auto hide-scrollbar">
             {activePage === Page.HOME && <Home onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} tenant={currentTenant} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} coupons={coupons} user={user} orderType={orderType} onOpenAuth={() => { setAuthTarget('client'); setAuthMode('login'); setShowAuthModal(true); }} onGoToAlerts={() => setActivePage(Page.ALERTS)} />}
-            {activePage === Page.DETAILS && selectedProduct && <ProductDetails isDarkMode={isDarkMode} product={selectedProduct} onBack={() => setActivePage(Page.HOME)} onAddToCart={(p, q, ex, obs, don, sides) => { setCart([...cart, {...p, quantity: q, extras: ex, itemObservation: obs, selectedSides: sides}]); setActivePage(Page.CART); }} isFavorite={isFavorite(selectedProduct.id)} toggleFavorite={() => toggleFavorite(selectedProduct.id)} />}
+            {activePage === Page.DETAILS && selectedProduct && <ProductDetails isDarkMode={isDarkMode} product={selectedProduct} onBack={() => setActivePage(Page.HOME)} onAddToCart={(p, q, ex, obs) => { setCart([...cart, {...p, quantity: q, extras: ex, itemObservation: obs}]); setActivePage(Page.CART); }} isFavorite={isFavorite(selectedProduct.id)} toggleFavorite={() => toggleFavorite(selectedProduct.id)} />}
             {activePage === Page.CART && <Cart isDarkMode={isDarkMode} items={cart} orderType={orderType} userInfo={userInfo} setUserInfo={setUserInfo} onUpdateQuantity={(id, d) => setCart(prev => prev.map(i => i.id === id ? {...i, quantity: Math.max(0, i.quantity + d)} : i).filter(i => i.quantity > 0))} onBack={() => setActivePage(Page.HOME)} tenant={currentTenant} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onCheckout={handlePlaceOrder} coupons={coupons} user={user} />}
             {activePage === Page.ALERTS && <Alerts isDarkMode={isDarkMode} orderType={orderType} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.FAVOURITE && <Favourite isDarkMode={isDarkMode} tenant={currentTenant} favorites={favorites} toggleFavorite={toggleFavorite} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onBack={() => setActivePage(Page.HOME)} />}
