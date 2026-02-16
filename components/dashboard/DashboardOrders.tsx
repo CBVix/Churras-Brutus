@@ -96,15 +96,22 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], setOrder
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     if (!printWindow) return;
 
-    const itemsHtml = order.items.map(item => `
-      <div style="border-bottom: 1px dashed #eee; padding: 4px 0;">
-        <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px;">
-          <span>${item.quantity}x ${item.name}</span>
-          <span>R$ ${(item.price * item.quantity).toFixed(2)}</span>
-        </div>
-        ${item.itemObservation ? `<div style="font-size: 11px; margin-top: 2px; color: #444;">* Obs: ${item.itemObservation}</div>` : ''}
-      </div>
-    `).join('');
+    const itemsHtml = order.items.map(item => {
+        const sidesList = (item.selectedSides || []).length > 0 
+            ? `<div style="font-size: 11px; color: #333; margin: 2px 0;">+ ${(item.selectedSides || []).map(s => s.name).join(', ')}</div>` 
+            : '';
+        const itemPrice = item.price + (item.selectedSides || []).reduce((acc, s) => acc + s.price, 0);
+        return `
+          <div style="border-bottom: 1px dashed #eee; padding: 4px 0;">
+            <div style="display: flex; justify-content: space-between; font-weight: bold; font-size: 14px;">
+              <span>${item.quantity}x ${item.name}</span>
+              <span>R$ ${(itemPrice * item.quantity).toFixed(2)}</span>
+            </div>
+            ${sidesList}
+            ${item.itemObservation ? `<div style="font-size: 11px; margin-top: 2px; color: #444;">* Obs: ${item.itemObservation}</div>` : ''}
+          </div>
+        `;
+    }).join('');
 
     const content = `
       <html>
@@ -128,7 +135,6 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], setOrder
             .value { font-size: 14px; font-weight: bold; }
             .divider { border-top: 1px solid #000; margin: 10px 0; }
             .total { text-align: right; font-size: 18px; font-weight: bold; margin-top: 10px; }
-            .footer { text-align: center; font-size: 10px; margin-top: 20px; font-style: italic; }
           </style>
         </head>
         <body>
@@ -187,7 +193,6 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], setOrder
 
   return (
     <div className="flex flex-col gap-0 bg-[#09090B] pb-[50px] min-h-screen">
-       {/* BARRA SUPERIOR - COMPACTA */}
        <div className="flex items-center justify-between bg-[#09090B] border-b border-white/5 p-3 px-6 shadow-xl sticky top-[-20px] z-[50]">
           <div className="flex items-center gap-4">
               <button 
@@ -204,7 +209,6 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], setOrder
           </div>
        </div>
 
-       {/* FILTROS - MAIS DENSOS */}
        <div className="flex justify-between items-center gap-3 px-6 bg-[#09090B] py-4 border-b border-white/5 relative z-[10]">
           <div className="flex gap-1 bg-[#161618] p-0.5 rounded-lg border border-white/5 shadow-inner">
             <button onClick={() => setOrderFilter('all')} className={`px-4 py-1.5 rounded-md text-[9px] font-black uppercase tracking-widest transition-all ${orderFilter === 'all' ? 'bg-primary text-white shadow-lg' : 'text-gray-500 hover:text-white'}`}>Todos</button>
@@ -217,7 +221,6 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], setOrder
           </div>
        </div>
 
-       {/* COLUNAS KDS - ESTREITADAS */}
        <div className="w-full pt-4 overflow-x-auto hide-scrollbar bg-[#09090B]">
          <div className="flex gap-4 h-fit min-w-full items-start px-6"> 
            {columns.map(col => (
@@ -250,12 +253,19 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], setOrder
                               </div>
                            </div>
                            
-                           <div className="space-y-1 mb-3 max-h-[120px] overflow-y-auto hide-scrollbar">
+                           <div className="space-y-2 mb-3 max-h-[160px] overflow-y-auto hide-scrollbar">
                               {(order.items || []).map((item, idx) => (
                                  <div key={idx} className="flex items-start gap-2 p-1.5 rounded-lg bg-white/[0.03] border border-white/[0.05]">
                                     <div className="w-5 h-5 rounded-md bg-primary text-white flex items-center justify-center font-black text-[9px] flex-shrink-0">{item.quantity}x</div>
                                     <div className="flex-1 pt-0.5">
                                        <div className="text-white text-[9px] font-bold uppercase tracking-tight leading-tight">{item.name}</div>
+                                       {(item.selectedSides || []).length > 0 && (
+                                          <div className="flex flex-wrap gap-1 mt-1">
+                                             {(item.selectedSides || []).map((s, si) => (
+                                                <span key={si} className="text-[7px] font-black uppercase text-primary/80 bg-primary/10 px-1 rounded-sm">+ {s.name}</span>
+                                             ))}
+                                          </div>
+                                       )}
                                     </div>
                                  </div>
                               ))}

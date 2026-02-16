@@ -1,21 +1,27 @@
 
+export interface ProductSide {
+  name: string;
+  price: number;
+}
+
 export interface Product {
   id: string;
   name: string;
   price: number;
   rating: number;
   reviews: string;
-  image: string; // Mapeia para image_url no banco se necessário
+  image: string; 
   category: string;
-  prepTime: string; // No banco: prep_time
+  prepTime: string; 
   description: string;
   isVegan?: boolean;
   isCombo?: boolean;
-  isHighlighted?: boolean; // No banco: is_highlighted
+  isHighlighted?: boolean; 
   availability?: 'available' | 'low_stock' | 'out_of_stock';
-  inventoryId?: string; // No banco: inventory_id
+  inventoryId?: string; 
   moods?: string[]; 
   affinityTags?: string[];
+  sides?: ProductSide[]; // Lista de acompanhamentos configuráveis
 }
 
 export type InventoryCategory = 'proteinas' | 'bebidas' | 'suprimentos' | 'outros';
@@ -23,11 +29,11 @@ export type InventoryCategory = 'proteinas' | 'bebidas' | 'suprimentos' | 'outro
 export interface InventoryItem {
   id: string;
   name: string;
-  currentQty: number; // No banco: current_qty
-  minQty: number;     // No banco: min_qty
+  currentQty: number; 
+  minQty: number;     
   unit: string;
   category: InventoryCategory;
-  costPrice: number;  // No banco: cost_price
+  costPrice: number;  
 }
 
 export interface WasteRecord {
@@ -47,8 +53,8 @@ export interface FinancialSnapshot {
   year: number;
   revenue: number;
   cmv: number;
-  fixedCosts: number; // No banco: fixed_costs
-  netProfit: number;  // No banco: net_profit
+  fixedCosts: number; 
+  netProfit: number;  
   margin: number;
 }
 
@@ -57,17 +63,17 @@ export interface AppNotification {
   title: string;
   message: string;
   type: 'info' | 'order' | 'promo' | 'system';
-  isRead: boolean; // No banco: is_read
-  createdAt: string; // No banco: created_at
+  isRead: boolean; 
+  createdAt: string; 
 }
 
 export interface PrinterSettings {
   tenant_slug?: string;
-  printerWidth: number; // No banco: printer_width
-  autoPrint: boolean;   // No banco: auto_print
-  ipAddress?: string;   // No banco: ip_address
-  headerText?: string;  // No banco: header_text
-  footerText?: string;  // No banco: footer_text
+  printerWidth: number; 
+  autoPrint: boolean;   
+  ipAddress?: string;   
+  headerText?: string;  
+  footerText?: string;  
 }
 
 export interface Category {
@@ -87,24 +93,25 @@ export interface Tenant {
   slug: string;
   logo: string;
   whatsapp: string;
-  pixKey: string;      // No banco: pix_key
-  paymentLink?: string; // No banco: payment_link
-  deliveryFee: number;  // No banco: delivery_fee
-  deliveryTime?: string; // No banco: delivery_time (ex: "40-50")
+  pixKey: string;      
+  paymentLink?: string; 
+  deliveryFee: number;  
+  deliveryTime?: string; 
   themeColor: string;
   products: Product[];
   categories: Category[];
   address: string;
   instagram: string;
-  cardMachineFee: number; // No banco: card_machine_fee
+  cardMachineFee: number; 
   isOpen?: boolean;
-  operatingHours?: Record<string, BusinessHours>; // No banco: operating_hours
-  holidayClosures?: string[]; // No banco: holiday_closures
+  operatingHours?: Record<string, BusinessHours>; 
+  holidayClosures?: string[]; 
 }
 
 export interface CartItem extends Product {
   quantity: number;
-  extras: string[];
+  extras: string[]; // Mantido por compatibilidade
+  selectedSides?: ProductSide[]; // Novos acompanhamentos dinâmicos
   doneness?: string;
   itemObservation?: string;
 }
@@ -113,29 +120,29 @@ export type OrderStatus = 'pending' | 'preparing' | 'finished' | 'canceled' | 'r
 
 export interface Order {
   id: string;
-  orderNumber?: number;      // No banco: order_number (SERIAL)
-  customerName: string;      // No banco: customer_name
-  customerWhatsapp: string;  // No banco: customer_whatsapp
-  items: CartItem[];         // No banco: items (JSONB)
+  orderNumber?: number;      
+  customerName: string;      
+  customerWhatsapp: string;  
+  items: CartItem[];         
   total: number;
   type: OrderType;
   status: OrderStatus;
-  createdAt: Date;           // No banco: created_at
+  createdAt: Date;           
   tableNumber?: string;
   address?: string;
   observation?: string;
   couponCode?: string;
   discountApplied?: number;
-  userId?: string;           // No banco: user_id
+  userId?: string;           
 }
 
 export interface Coupon {
   id: string;
   code: string;
-  discountValue: number; // No banco: discount_value
-  maxUses: number;       // No banco: max_uses
-  currentUses: number;   // No banco: current_uses
-  isActive: boolean;     // No banco: is_active
+  discountValue: number; 
+  maxUses: number;       
+  currentUses: number;   
+  isActive: boolean;     
   userId?: string | null;
   customerEmail?: string | null;
   customerPhone?: string | null;
@@ -147,10 +154,10 @@ export interface Customer {
   whatsapp: string;
   email?: string;
   address?: string;
-  totalOrders: number; // No banco: total_orders
-  totalSpent: number;  // No banco: total_spent
-  lastOrderDate?: string; // No banco: last_order_date
-  tenantSlug: string; // No banco: tenant_slug
+  totalOrders: number; 
+  totalSpent: number;  
+  lastOrderDate?: string; 
+  tenantSlug: string; 
 }
 
 export enum OrderType {

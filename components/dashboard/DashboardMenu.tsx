@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo } from 'react';
-import { Tenant, Product, InventoryItem } from '../../types';
-import { LayoutGrid, List, Plus, Copy, Edit2, Trash2, Star, Ban, Package, X, FileText, DollarSign, Settings, Image, Save, EyeOff, Ticket, AlertCircle } from 'lucide-react';
+import { Tenant, Product, InventoryItem, ProductSide } from '../../types';
+import { LayoutGrid, List, Plus, Copy, Edit2, Trash2, Star, Ban, Package, X, FileText, DollarSign, Settings, Image, Save, EyeOff, Ticket, AlertCircle, Utensils } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 
 interface DashboardMenuProps {
@@ -11,7 +11,7 @@ interface DashboardMenuProps {
 }
 
 type ProductViewMode = 'grid' | 'list';
-type ModalTab = 'general' | 'pricing' | 'settings' | 'media';
+type ModalTab = 'general' | 'pricing' | 'sides' | 'settings' | 'media';
 type ProductStatusFilter = 'all' | 'out_of_stock' | 'highlighted';
 
 const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpdateTenant }) => {
@@ -23,8 +23,11 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
   
   const [isProductModalOpen, setIsProductModalOpen] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
-  const [productForm, setProductForm] = useState<Partial<Product>>({ name: '', price: 0, category: 'tradicionais', description: '', prepTime: '15 Min', image: '' });
+  const [productForm, setProductForm] = useState<Partial<Product>>({ name: '', price: 0, category: 'tradicionais', description: '', prepTime: '15 Min', image: '', sides: [] });
   const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Side form state
+  const [newSide, setNewSide] = useState<ProductSide>({ name: '', price: 0 });
 
   const filteredProducts = useMemo(() => {
     return tenant.products.filter(p => {
@@ -63,7 +66,8 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
       image: productForm.image,
       is_highlighted: productForm.isHighlighted || false,
       availability: productForm.availability || 'available',
-      inventory_id: productForm.inventoryId || null
+      inventory_id: productForm.inventoryId || null,
+      sides: productForm.sides || [] // Salvando acompanhamentos
     };
 
     try {
@@ -78,13 +82,29 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
       setIsProductModalOpen(false); 
       setEditingProductId(null);
       setProductModalTab('general');
-      setProductForm({ name: '', price: 0, category: 'tradicionais', description: '', prepTime: '15 Min', image: '' }); 
+      setProductForm({ name: '', price: 0, category: 'tradicionais', description: '', prepTime: '15 Min', image: '', sides: [] }); 
       setErrors({});
     } catch (err: any) {
       alert("Erro ao salvar produto: " + err.message);
     }
   };
   
+  const handleAddSide = () => {
+    if (!newSide.name || newSide.price < 0) return;
+    setProductForm(prev => ({
+        ...prev,
+        sides: [...(prev.sides || []), newSide]
+    }));
+    setNewSide({ name: '', price: 0 });
+  };
+
+  const handleRemoveSide = (index: number) => {
+    setProductForm(prev => ({
+        ...prev,
+        sides: (prev.sides || []).filter((_, i) => i !== index)
+    }));
+  };
+
   const handleDuplicateProduct = async (product: Product) => {
     if (window.confirm(`Deseja duplicar "${product.name}"?`)) {
       const dbPayload = {
@@ -97,7 +117,8 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
         image: product.image,
         is_highlighted: product.isHighlighted,
         availability: 'available',
-        inventory_id: product.inventoryId
+        inventory_id: product.inventoryId,
+        sides: product.sides || []
       };
       await supabase.from('products').insert([dbPayload]);
     }
@@ -142,7 +163,7 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
                <button onClick={() => setProductViewMode('grid')} className={`p-1.5 rounded transition-all ${productViewMode === 'grid' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white'}`}><LayoutGrid size={16} /></button>
                <button onClick={() => setProductViewMode('list')} className={`p-1.5 rounded transition-all ${productViewMode === 'list' ? 'bg-white/10 text-white' : 'text-gray-500 hover:text-white'}`}><List size={16} /></button>
             </div>
-            <button onClick={() => { setIsProductModalOpen(true); setProductModalTab('general'); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-orange-600 transition-colors shadow-lg shadow-primary/20"><Plus size={14} /> Novo Produto</button>
+            <button onClick={() => { setIsProductModalOpen(true); setProductModalTab('general'); setProductForm({ name: '', price: 0, category: 'tradicionais', description: '', prepTime: '15 Min', image: '', sides: [] }); }} className="bg-primary text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 hover:bg-orange-600 transition-colors shadow-lg shadow-primary/20"><Plus size={14} /> Novo Produto</button>
          </div>
        </div>
        {productViewMode === 'grid' ? (
@@ -196,7 +217,16 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
           <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-[60] backdrop-blur-sm">
              <div className="bg-[#161618] rounded-2xl w-full max-w-2xl border border-white/10 overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
                 <div className="p-6 border-b border-white/10 flex justify-between items-center bg-[#161618]"><h3 className="text-white font-bold text-lg">{editingProductId ? 'Editar Produto' : 'Novo Produto'}</h3><button onClick={() => setIsProductModalOpen(false)} className="text-gray-500 hover:text-white"><X size={20}/></button></div>
-                <div className="flex border-b border-white/10 bg-[#09090B]/50">{[{ id: 'general', label: 'Geral', icon: <FileText size={14} /> }, { id: 'pricing', label: 'Preço & Custo', icon: <DollarSign size={14} /> }, { id: 'settings', label: 'Configurações', icon: <Settings size={14} /> }, { id: 'media', label: 'Mídia', icon: <Image size={14} /> }].map(tab => (<button key={tab.id} onClick={() => setProductModalTab(tab.id as ModalTab)} className={`flex-1 py-4 flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-widest transition-all border-b-2 ${productModalTab === tab.id ? 'border-primary text-white bg-white/5' : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>{tab.icon} {tab.label}</button>))}</div>
+                <div className="flex border-b border-white/10 bg-[#09090B]/50">
+                    {[{ id: 'general', label: 'Geral', icon: <FileText size={14} /> }, 
+                      { id: 'pricing', label: 'Preço', icon: <DollarSign size={14} /> }, 
+                      { id: 'sides', label: 'Acompanhamentos', icon: <Utensils size={14} /> },
+                      { id: 'settings', label: 'Configs', icon: <Settings size={14} /> }, 
+                      { id: 'media', label: 'Mídia', icon: <Image size={14} /> }
+                    ].map(tab => (
+                        <button key={tab.id} onClick={() => setProductModalTab(tab.id as ModalTab)} className={`flex-1 py-4 flex items-center justify-center gap-2 text-[10px] font-bold uppercase tracking-widest transition-all border-b-2 ${productModalTab === tab.id ? 'border-primary text-white bg-white/5' : 'border-transparent text-gray-500 hover:text-gray-300 hover:bg-white/5'}`}>{tab.icon} {tab.label}</button>
+                    ))}
+                </div>
                 <div className="p-8 overflow-y-auto flex-1 bg-[#161618]">
                     <form onSubmit={handleSaveProduct} className="space-y-6">
                         {productModalTab === 'general' && (
@@ -250,7 +280,55 @@ const DashboardMenu: React.FC<DashboardMenuProps> = ({ tenant, inventory, onUpda
                                 <div className="p-5 rounded-xl border border-white/5 bg-[#09090B]/50"><h4 className="text-xs font-bold uppercase tracking-widest text-gray-400 mb-4 flex items-center gap-2"><Package size={14} /> Vínculo com Estoque</h4><div className="space-y-3"><select value={productForm.inventoryId || ''} onChange={e => setProductForm({...productForm, inventoryId: e.target.value})} className="w-full bg-[#161618] border border-white/10 rounded-lg p-3 text-sm text-white focus:outline-none focus:border-primary/50"><option value="">Não vincular (Sem baixa automática)</option>{inventory.map(item => (<option key={item.id} value={item.id}>{item.name} ({item.currentQty} {item.unit}) - Custo: R$ {item.costPrice.toFixed(2)}</option>))}</select>{productForm.inventoryId && (<div className="mt-4 pt-4 border-t border-white/5 flex justify-between items-center"><div className="text-gray-500 text-xs">Custo Estimado: <span className="text-white font-bold">R$ {inventory.find(i => i.id === productForm.inventoryId)?.costPrice.toFixed(2) || '0.00'}</span></div><div className="text-right"><div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Margem Bruta</div>{(() => { const cost = inventory.find(i => i.id === productForm.inventoryId)?.costPrice || 0; const margin = (productForm.price || 0) - cost; const marginPercent = productForm.price ? (margin / productForm.price) * 100 : 0; return (<div className={`text-lg font-bold ${margin > 0 ? 'text-green-500' : 'text-red-500'}`}>{marginPercent.toFixed(1)}% <span className="text-xs opacity-70">(R$ {margin.toFixed(2)})</span></div>); })()}</div></div>)}</div></div>
                             </div>
                         )}
-                        {productModalTab === 'settings' && (<div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300"><label className="flex items-center justify-between p-4 rounded-xl border border-white/5 bg-[#09090B] cursor-pointer hover:border-white/10 transition-colors"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-lg flex items-center justify-center ${productForm.isHighlighted ? 'bg-yellow-500/20 text-yellow-500' : 'bg-gray-800 text-gray-500'}`}><Star size={20} fill={productForm.isHighlighted ? "currentColor" : "none"} /></div><div><div className="font-bold text-sm text-white">Produto em Destaque</div><div className="text-[10px] text-gray-500">Aparece no topo do cardápio com uma estrela.</div></div></div><input type="checkbox" checked={productForm.isHighlighted || false} onChange={e => setProductForm({...productForm, isHighlighted: e.target.checked})} className="w-5 h-5 accent-primary" /></label><label className="flex items-center justify-between p-4 rounded-xl border border-white/5 bg-[#09090B] cursor-pointer hover:border-white/10 transition-colors"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-lg flex items-center justify-center ${productForm.availability === 'out_of_stock' ? 'bg-red-500/20 text-red-500' : 'bg-gray-800 text-gray-500'}`}><EyeOff size={20} /></div><div><div className="font-bold text-sm text-white">Indisponível (Ocultar)</div><div className="text-[10px] text-gray-500">O produto não aparecerá para os clientes.</div></div></div><input type="checkbox" checked={productForm.availability === 'out_of_stock'} onChange={e => setProductForm({...productForm, availability: e.target.checked ? 'out_of_stock' : 'available'})} className="w-5 h-5 accent-red-500" /></label><div className="p-4 rounded-xl border border-white/5 bg-[#09090B] opacity-50 pointer-events-none"><div className="flex items-center gap-3 mb-2"><Ticket size={16} className="text-gray-400" /><span className="font-bold text-sm text-white">Promoção Ativa</span></div><p className="text-[10px] text-gray-500">Configuração de promoções individuais em breve.</p></div></div>)}
+                        {productModalTab === 'sides' && (
+                            <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+                                <div className="bg-[#09090B] p-5 rounded-2xl border border-white/5 space-y-4">
+                                    <h4 className="text-xs font-black uppercase tracking-widest text-primary flex items-center gap-2">
+                                        <Plus size={14}/> Adicionar Novo Acompanhamento
+                                    </h4>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-bold text-gray-500 uppercase ml-1">Nome</label>
+                                            <input type="text" placeholder="Ex: Farofa" value={newSide.name} onChange={e => setNewSide({...newSide, name: e.target.value})} className="w-full bg-[#161618] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[9px] font-bold text-gray-500 uppercase ml-1">Preço Extra (R$)</label>
+                                            <input type="number" step="0.50" placeholder="0.00" value={newSide.price} onChange={e => setNewSide({...newSide, price: parseFloat(e.target.value) || 0})} className="w-full bg-[#161618] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
+                                        </div>
+                                    </div>
+                                    <button type="button" onClick={handleAddSide} className="w-full bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 py-2 rounded-lg text-[10px] font-black uppercase tracking-widest transition-all">
+                                        Incluir na Lista
+                                    </button>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h4 className="text-[10px] font-bold uppercase tracking-widest text-gray-500 ml-1">Itens Cadastrados</h4>
+                                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
+                                        {(productForm.sides || []).length > 0 ? (productForm.sides || []).map((side, idx) => (
+                                            <div key={idx} className="flex justify-between items-center p-3 rounded-xl bg-[#09090B] border border-white/5 group hover:border-white/10 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center text-primary">
+                                                        <Utensils size={14}/>
+                                                    </div>
+                                                    <div>
+                                                        <p className="text-xs font-bold text-white uppercase">{side.name}</p>
+                                                        <p className="text-[10px] text-primary font-bold">R$ {side.price.toFixed(2)}</p>
+                                                    </div>
+                                                </div>
+                                                <button type="button" onClick={() => handleRemoveSide(idx)} className="p-2 text-gray-600 hover:text-red-500 transition-colors">
+                                                    <Trash2 size={14}/>
+                                                </button>
+                                            </div>
+                                        )) : (
+                                            <div className="py-8 text-center border-2 border-dashed border-white/5 rounded-2xl opacity-40">
+                                                <p className="text-[10px] font-bold uppercase text-gray-500">Nenhum acompanhamento</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                        {productModalTab === 'settings' && (<div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300"><label className="flex items-center justify-between p-4 rounded-xl border border-white/5 bg-[#09090B] cursor-pointer hover:border-white/10 transition-colors"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-lg flex items-center justify-center ${productForm.isHighlighted ? 'bg-yellow-500/20 text-yellow-500' : 'bg-gray-800 text-gray-500'}`}><Star size={20} fill={productForm.isHighlighted ? "currentColor" : "none"} /></div><div><div className="font-bold text-sm text-white">Produto em Destaque</div><div className="text-[10px] text-gray-500">Aparece no topo do cardápio com uma estrela.</div></div></div><input type="checkbox" checked={productForm.isHighlighted || false} onChange={e => setProductForm({...productForm, isHighlighted: e.target.checked})} className="w-5 h-5 accent-primary" /></label><label className="flex items-center justify-between p-4 rounded-xl border border-white/5 bg-[#09090B] cursor-pointer hover:border-white/10 transition-colors"><div className="flex items-center gap-3"><div className={`w-10 h-10 rounded-lg flex items-center justify-center ${productForm.availability === 'out_of_stock' ? 'bg-red-500/20 text-red-500' : 'bg-gray-800 text-gray-500'}`}><EyeOff size={20} /></div><div><div className="font-bold text-sm text-white">Indisponível (Ocultar)</div><div className="text-[10px] text-gray-500">O produto não aparecerá para os clientes.</div></div></div><input type="checkbox" checked={productForm.availability === 'out_of_stock'} onChange={e => setProductForm({...productForm, availability: e.target.checked ? 'out_of_stock' : 'available'})} className="w-5 h-5 accent-red-500" /></label></div>)}
                         {productModalTab === 'media' && (<div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300"><div className="space-y-1.5"><label className="text-[10px] font-black uppercase tracking-widest text-gray-500 ml-1">URL da Imagem</label><input type="text" placeholder="https://..." value={productForm.image} onChange={e => setProductForm({...productForm, image: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-xl p-4 text-sm text-white focus:outline-none focus:border-primary/50" /></div><div className="h-64 rounded-xl border-2 border-dashed border-white/10 bg-[#09090B] flex flex-col items-center justify-center relative overflow-hidden group">{productForm.image ? (<><img src={productForm.image} className="w-full h-full object-cover opacity-50 group-hover:opacity-30 transition-opacity" /><div className="absolute inset-0 flex items-center justify-center"><p className="text-xs font-bold text-white bg-black/50 px-3 py-1 rounded-full">Preview da Imagem</p></div></>) : (<div className="text-center p-6"><Image size={32} className="mx-auto text-gray-600 mb-2" /><p className="text-xs font-bold text-gray-500">Nenhuma imagem definida</p></div>)}</div></div>)}
                         <div className="pt-6 border-t border-white/10 flex gap-3 sticky bottom-0 bg-[#161618] z-20"><button type="button" onClick={() => setIsProductModalOpen(false)} className="flex-1 bg-gray-700/50 hover:bg-gray-700 text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest transition-colors">Cancelar</button><button type="submit" className="flex-1 bg-primary hover:bg-orange-600 text-white py-4 rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-lg shadow-primary/20 flex items-center justify-center gap-2"><Save size={16} /> Salvar Produto</button></div>
                     </form>

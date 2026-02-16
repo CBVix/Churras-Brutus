@@ -33,9 +33,12 @@ const Cart: React.FC<CartProps> = ({ items, onUpdateQuantity, onBack, tenant, us
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
   const [couponError, setCouponError] = useState('');
 
-  const subtotal = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  const subtotal = items.reduce((acc, item) => {
+    const sidePrices = (item.selectedSides || []).reduce((sAcc, s) => sAcc + s.price, 0);
+    return acc + ((item.price + sidePrices) * item.quantity);
+  }, 0);
+  
   const deliveryFee = orderType === OrderType.DELIVERY ? tenant.deliveryFee : 0;
-  // Cupom só é permitido se não for LOCAL
   const discount = (orderType !== OrderType.LOCAL && appliedCoupon) ? appliedCoupon.discountValue : 0;
   const total = Math.max(0, subtotal + deliveryFee - discount);
 
@@ -63,7 +66,7 @@ const Cart: React.FC<CartProps> = ({ items, onUpdateQuantity, onBack, tenant, us
   };
 
   const handleApplyCoupon = () => {
-    if (orderType === OrderType.LOCAL) return; // Segurança extra
+    if (orderType === OrderType.LOCAL) return; 
 
     setCouponError('');
     if (!couponCode.trim()) return;
@@ -99,42 +102,48 @@ const Cart: React.FC<CartProps> = ({ items, onUpdateQuantity, onBack, tenant, us
   const handleFinish = () => {
     onCheckout(appliedCoupon || undefined);
     
-    let message = '';
-    const itemsListSimple = items.map(i => `${i.quantity}x ${i.name} - R$ ${(i.price * i.quantity).toFixed(2)}${i.itemObservation ? ` (Obs: ${i.itemObservation})` : ''}`).join('\n');
-    const itemsListWithLine = items.map(i => `\n${i.quantity}x ${i.name} - R$ ${(i.price * i.quantity).toFixed(2)}${i.itemObservation ? ` (Obs: ${i.itemObservation})` : ''}`).join('');
+    const itemsListSimple = items.map(i => {
+        const sidesText = (i.selectedSides || []).length > 0 
+            ? `\n    + Acomp: ${(i.selectedSides || []).map(s => s.name).join(', ')}` 
+            : '';
+        const basePrice = i.price + (i.selectedSides || []).reduce((acc, s) => acc + s.price, 0);
+        return `${i.quantity}x ${i.name} - R$ ${(basePrice * i.quantity).toFixed(2)}${sidesText}${i.itemObservation ? ` (Obs: ${i.itemObservation})` : ''}`;
+    }).join('\n\n');
 
+    let message = '';
     if (paymentMethod === 'pix' || paymentMethod === 'link') {
       message = `🔥 NOVO PEDIDO - ${tenant.name.toUpperCase()}\n\n` +
-        `Cliente: ${userInfo.name} Telefone: ${userInfo.whatsapp}\n\n` +
+        `Cliente: ${userInfo.name}\n` +
+        `WhatsApp: ${userInfo.whatsapp}\n\n` +
         `ITENS DO PEDIDO:\n${itemsListSimple}\n\n` +
-        `RESUMO:\n\n` +
+        `RESUMO:\n` +
         `Subtotal: R$ ${subtotal.toFixed(2)}\n` +
         (deliveryFee > 0 ? `Taxa de Entrega: R$ ${deliveryFee.toFixed(2)}\n` : '') +
         (appliedCoupon ? `Desconto: - R$ ${discount.toFixed(2)}\n` : '') +
         `TOTAL: R$ ${total.toFixed(2)}\n\n` +
-        `ENTREGA/PAGAMENTO:\n\n` +
+        `ENTREGA/PAGAMENTO:\n` +
         (orderType === OrderType.DELIVERY ? `Endereço: ${userInfo.address}\n` : `Mesa: ${userInfo.tableNumber}\n`) +
         `Forma de Pagamento: ${paymentMethod === 'pix' ? 'Pix' : 'Cartão (Link)'}\n\n` +
         `Aqui está meu comprovante 👇`;
     } 
     else if (paymentMethod === 'delivery_card') {
       message = `🔥 NOVO PEDIDO - ${tenant.name.toUpperCase()}\n\n` +
-        `Cliente: ${userInfo.name} Endereço: ${userInfo.address}\n\n` +
-        `ITENS:\n${itemsListWithLine}\n\n` +
-        `Total do Pedido: R$ ${total.toFixed(2)}\n\n` +
-        `💳 PAGAMENTO NA ENTREGA:\n\n` +
-        `Forma escolhida: [pagamento na entrega]\n` +
-        `Observação: [Levar maquininha de cartão bandeira: "${cardBrand}"]\n\n` +
-        `Por favor, confirme o recebimento e o tempo estimado de entrega! 🏍️`;
+        `Cliente: ${userInfo.name}\n` +
+        `WhatsApp: ${userInfo.whatsapp}\n\n` +
+        `ITENS:\n${itemsListSimple}\n\n` +
+        `Total: R$ ${total.toFixed(2)}\n\n` +
+        `💳 PAGAMENTO NA ENTREGA:\n` +
+        `Endereço: ${userInfo.address}\n` +
+        `Levar maquininha: "${cardBrand}"\n\n` +
+        `Aguardando confirmação! 🛵`;
     }
     else {
       message = `🔥 NOVO PEDIDO - ${tenant.name.toUpperCase()}\n\n` +
-        `Cliente: ${userInfo.name} Mesa: ${userInfo.tableNumber}\n\n` +
-        `ITENS DO PEDIDO:\n${itemsListSimple}\n\n` +
+        `Cliente: ${userInfo.name} - Mesa: ${userInfo.tableNumber}\n\n` +
+        `ITENS:\n${itemsListSimple}\n\n` +
         `Total: R$ ${total.toFixed(2)}\n\n` +
-        `💳 PAGAMENTO NA MESA:\n\n` +
-        `Forma escolhida: [pagamento na entrega / mesa]\n\n` +
-        `Por favor, confirme o recebimento do pedido! 🍢`;
+        `🍢 Pagamento na Mesa\n` +
+        `Por favor, confirme meu pedido!`;
     }
     
     window.open(`https://wa.me/${tenant.whatsapp}?text=${encodeURIComponent(message)}`);
@@ -156,29 +165,41 @@ const Cart: React.FC<CartProps> = ({ items, onUpdateQuantity, onBack, tenant, us
         {items.length > 0 ? (
           <div className="px-6 space-y-6">
             <div className="space-y-4">
-              {items.map((item) => (
-                <div key={item.id + JSON.stringify(item.extras) + item.itemObservation} className={`p-4 rounded-xl border transition-colors ${isDarkMode ? 'bg-[#1a1a1a] border-white/5 shadow-black/20' : 'bg-white border-silver shadow-sm'}`}>
-                  <div className="flex items-center gap-4">
-                    <div className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 ${isDarkMode ? 'bg-[#121212]' : 'bg-[#F1F5F9]'}`}>
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className={`font-bold text-[11px] mb-0.5 truncate uppercase tracking-tight ${isDarkMode ? 'text-gray-200' : 'text-[#0F172A]'}`}>{item.name}</h4>
-                      <p className="text-primary font-bold text-xs mb-2">R$ {item.price.toFixed(2)}</p>
-                      <div className="flex items-center gap-2">
-                        <div className={`flex items-center rounded-lg p-0.5 border ${isDarkMode ? 'bg-[#121212]/5 border-white/5' : 'bg-gray-100 border-gray-200'}`}>
-                          <button onClick={() => onUpdateQuantity(item.id, -1)} className={`w-6 h-6 rounded flex items-center justify-center border ${isDarkMode ? 'bg-white/5 border-white/5 text-gray-400' : 'bg-white border-gray-200 text-[#0F172A]'}`}><Minus size={12} /></button>
-                          <span className={`w-8 text-center text-[10px] font-bold ${isDarkMode ? 'text-white' : 'text-[#0F172A]'}`}>{item.quantity}</span>
-                          <button onClick={() => onUpdateQuantity(item.id, 1)} className={`w-6 h-6 rounded flex items-center justify-center border ${isDarkMode ? 'bg-white/5 border-white/5 text-gray-400' : 'bg-white border-gray-200 text-[#0F172A]'}`}><Plus size={12} /></button>
+              {items.map((item) => {
+                const itemBasePrice = item.price + (item.selectedSides || []).reduce((acc, s) => acc + s.price, 0);
+                return (
+                  <div key={item.id + JSON.stringify(item.selectedSides) + item.itemObservation} className={`p-4 rounded-xl border transition-colors ${isDarkMode ? 'bg-[#1a1a1a] border-white/5 shadow-black/20' : 'bg-white border-silver shadow-sm'}`}>
+                    <div className="flex items-start gap-4">
+                      <div className={`w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 ${isDarkMode ? 'bg-[#121212]' : 'bg-[#F1F5F9]'}`}>
+                        <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className={`font-bold text-[11px] mb-0.5 truncate uppercase tracking-tight ${isDarkMode ? 'text-gray-200' : 'text-[#0F172A]'}`}>{item.name}</h4>
+                        
+                        {(item.selectedSides || []).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {(item.selectedSides || []).map((s, i) => (
+                              <span key={i} className="text-[8px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-md font-black uppercase">{s.name}</span>
+                            ))}
+                          </div>
+                        )}
+
+                        <p className="text-primary font-bold text-xs mb-2">R$ {itemBasePrice.toFixed(2)}</p>
+                        <div className="flex items-center gap-2">
+                          <div className={`flex items-center rounded-lg p-0.5 border ${isDarkMode ? 'bg-[#121212]/5 border-white/5' : 'bg-gray-100 border-gray-200'}`}>
+                            <button onClick={() => onUpdateQuantity(item.id, -1)} className={`w-6 h-6 rounded flex items-center justify-center border ${isDarkMode ? 'bg-white/5 border-white/5 text-gray-400' : 'bg-white border-gray-200 text-[#0F172A]'}`}><Minus size={12} /></button>
+                            <span className={`w-8 text-center text-[10px] font-bold ${isDarkMode ? 'text-white' : 'text-[#0F172A]'}`}>{item.quantity}</span>
+                            <button onClick={() => onUpdateQuantity(item.id, 1)} className={`w-6 h-6 rounded flex items-center justify-center border ${isDarkMode ? 'bg-white/5 border-white/5 text-gray-400' : 'bg-white border-gray-200 text-[#0F172A]'}`}><Plus size={12} /></button>
+                          </div>
+                          <button onClick={() => onUpdateQuantity(item.id, -item.quantity)} className="text-gray-500 hover:text-red-500 transition-colors ml-auto p-1">
+                            <Trash2 size={16} />
+                          </button>
                         </div>
-                        <button onClick={() => onUpdateQuantity(item.id, -item.quantity)} className="text-gray-500 hover:text-red-500 transition-colors ml-auto p-1">
-                          <Trash2 size={16} />
-                        </button>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
 
             <button 
@@ -313,7 +334,7 @@ const Cart: React.FC<CartProps> = ({ items, onUpdateQuantity, onBack, tenant, us
           </div>
         )}
 
-        {/* --- SEÇÃO DE CUPOM DESTACADA - Oculta no modo LOCAL --- */}
+        {/* --- SEÇÃO DE CUPOM DESTACADA --- */}
         {orderType !== OrderType.LOCAL && (
           <div className={`p-6 rounded-2xl border shadow-xl ${isDarkMode ? 'bg-[#1a1a1a] border-white/5' : 'bg-white border-silver'}`}>
             <div className="mb-4 space-y-3">
@@ -359,7 +380,6 @@ const Cart: React.FC<CartProps> = ({ items, onUpdateQuantity, onBack, tenant, us
           </div>
         )}
 
-        {/* Resumo Simplificado para Local (Sem Cupom) */}
         {orderType === OrderType.LOCAL && (
           <div className={`p-6 rounded-2xl border shadow-xl ${isDarkMode ? 'bg-[#1a1a1a] border-white/5' : 'bg-white border-silver'}`}>
             <div className="space-y-3 mb-4">
