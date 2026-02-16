@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Bike, Utensils, Search, Clock, Check, AlertTriangle, Flame, CheckCircle2, Archive, ShoppingBag, XCircle, Printer, Loader2, Volume2, VolumeX } from 'lucide-react';
+import { Bike, Utensils, Search, Clock, Check, AlertTriangle, Flame, CheckCircle2, Archive, ShoppingBag, XCircle, Printer, Loader2, Volume2, VolumeX, Sparkles } from 'lucide-react';
 import { Order, OrderStatus, Tenant } from '../../types';
 import { supabase } from '../../supabaseClient';
 
@@ -17,97 +17,88 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
   const [printingOrder, setPrintingOrder] = useState<Order | null>(null);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   
-  // Audio states
-  const [isAudioEnabled, setIsAudioEnabled] = useState(false);
+  // Persistência de Som conforme solicitado: soundEnabled no localStorage
+  const [isAudioEnabled, setIsAudioEnabled] = useState(() => {
+    return localStorage.getItem('soundEnabled') === 'true'; 
+  });
+  const [isAudioUnlocked, setIsAudioUnlocked] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const [recentOrderIds, setRecentOrderIds] = useState<Set<string>>(new Set());
 
   const [checkedItems, setCheckedItems] = useState<Record<string, Record<number, boolean>>>(() => {
     try {
       const saved = localStorage.getItem('kds_checked_items');
       return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
+    } catch (e) { return {}; }
   });
 
-  // Inicializar áudio
   useEffect(() => {
     audioRef.current = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+    audioRef.current.load();
   }, []);
 
-  // Monitoramento Realtime para o KDS
   useEffect(() => {
-    const channel = supabase.channel('kds_orders_monitor')
+    localStorage.setItem('soundEnabled', String(isAudioEnabled));
+  }, [isAudioEnabled]);
+
+  // Monitoramento Realtime
+  useEffect(() => {
+    const channel = supabase.channel('kds_realtime_v2')
       .on('postgres_changes', { 
         event: 'INSERT', 
         schema: 'public', 
         table: 'orders',
         filter: `tenant_slug=eq.${tenant.slug}` 
       }, (payload) => {
-        console.log('Novo pedido recebido no KDS:', payload.new);
+        const newOrderId = payload.new.id;
+        
         if (isAudioEnabled && audioRef.current) {
-          audioRef.current.play().catch(e => console.error('Erro ao tocar áudio:', e));
+          audioRef.current.play().catch(() => {
+            setIsAudioUnlocked(false);
+            console.warn('Áudio bloqueado. Requer clique do usuário.');
+          });
         }
+
+        setRecentOrderIds(prev => {
+          const next = new Set(prev);
+          next.add(newOrderId);
+          return next;
+        });
+
+        setTimeout(() => {
+          setRecentOrderIds(prev => {
+            const next = new Set(prev);
+            next.delete(newOrderId);
+            return next;
+          });
+        }, 12000);
       })
       .subscribe();
 
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(channel); };
   }, [tenant.slug, isAudioEnabled]);
 
+  // Desbloqueia o contexto de áudio na primeira interação se a preferência for True
   useEffect(() => {
-    localStorage.setItem('kds_checked_items', JSON.stringify(checkedItems));
-  }, [checkedItems]);
-
-  // Efeito para gerenciar a geração do PDF quando um pedido é selecionado para impressão
-  useEffect(() => {
-    if (printingOrder) {
-      const generatePDF = async () => {
-        const html2pdfLib = (window as any).html2pdf;
-        if (!html2pdfLib) {
-          alert('Erro: A biblioteca de PDF não carregou. Verifique sua conexão.');
-          setPrintingOrder(null);
-          return;
-        }
-
-        setIsGeneratingPdf(true);
-        await new Promise(resolve => setTimeout(resolve, 400));
-        const element = document.getElementById('printable-receipt-pdf');
-        
-        if (element) {
-          const opt = {
-            margin: 0,
-            filename: `comanda-pedido-${printingOrder.orderNumber || '00'}.pdf`,
-            image: { type: 'jpeg', quality: 0.98 },
-            html2canvas: { scale: 3, useCORS: true, logging: false, letterRendering: true },
-            jsPDF: { unit: 'mm', format: [80, 297], orientation: 'portrait' }
-          };
-
-          try {
-            await html2pdfLib().set(opt).from(element).save();
-          } catch (error) {
-            console.error('Erro ao gerar PDF:', error);
-            alert('Erro ao gerar o PDF da comanda.');
-          }
-        }
-        setIsGeneratingPdf(false);
-        setPrintingOrder(null);
-      };
-
-      generatePDF();
-    }
-  }, [printingOrder]);
-
-  const toggleItemCheck = (orderId: string, itemIdx: number) => {
-    setCheckedItems(prev => ({
-      ...prev,
-      [orderId]: {
-        ...(prev[orderId] || {}),
-        [itemIdx]: !(prev[orderId]?.[itemIdx])
+    const unlock = () => {
+      if (isAudioEnabled && audioRef.current && !isAudioUnlocked) {
+        audioRef.current.play().then(() => {
+          audioRef.current?.pause();
+          if (audioRef.current) audioRef.current.currentTime = 0;
+          setIsAudioUnlocked(true);
+        }).catch(() => {});
       }
-    }));
-  };
+    };
+    window.addEventListener('mousedown', unlock, { once: true });
+    window.addEventListener('touchstart', unlock, { once: true });
+    return () => {
+      window.removeEventListener('mousedown', unlock);
+      window.removeEventListener('touchstart', unlock);
+    };
+  }, [isAudioEnabled, isAudioUnlocked]);
+
+  const handlePrint = (order: Order) => setPrintingOrder(order);
 
   const filteredOrders = orders.filter(o => {
     if (!o || o.status === 'finished' || o.status === 'canceled') return false;
@@ -127,201 +118,89 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
     { id: 'ready_to_send', title: 'Prontos', color: 'border-green-500', orders: getOrdersByStatus('ready_to_send') }
   ];
 
-  const getTimeElapsed = (date: any) => {
-    if (!date) return 0;
-    const d = date instanceof Date ? date : new Date(date);
-    return Math.floor((now.getTime() - d.getTime()) / 60000);
-  };
-
-  const handlePrint = (order: Order) => {
-    setPrintingOrder(order);
-  };
-
-  const handleDispatchDelivery = (order: Order) => {
-    const itemsList = (order.items || []).map(i => `• ${i.quantity}x ${i.name} ${i.itemObservation ? `(${i.itemObservation})` : ''}`).join('\n');
-    let message = `🛵 *SAIU PARA ENTREGA!*\n\nOlá *${order.customerName}*, boas notícias!\nSeu pedido *#${order.orderNumber}* acabou de sair para entrega e está a caminho.\n\n*Resumo do Pedido:*\n${itemsList}\n\n📍 *Endereço:* ${order.address}\n💰 *Total:* R$ ${order.total?.toFixed(2)}\n\nQualquer dúvida é só chamar! Bom apetite 😋`;
-    const phone = (order.customerWhatsapp || '').replace(/\D/g, '');
-    const validPhone = phone.startsWith('55') ? phone : `55${phone}`;
-    window.open(`https://wa.me/${validPhone}?text=${encodeURIComponent(message)}`, '_blank');
-  };
-
-  const enableAudio = () => {
-    if (audioRef.current) {
-      audioRef.current.play().then(() => {
-        audioRef.current?.pause();
-        if (audioRef.current) audioRef.current.currentTime = 0;
-        setIsAudioEnabled(true);
-      }).catch(e => console.error("Falha ao habilitar áudio:", e));
-    }
-  };
-
   return (
     <div className="h-full flex flex-col gap-4">
-       {/* AVISO DE ATIVAÇÃO DE SOM */}
-       {!isAudioEnabled && (
-         <button 
-           onClick={enableAudio}
-           className="bg-primary/20 border border-primary/30 text-primary px-4 py-2.5 rounded-xl flex items-center justify-center gap-3 animate-pulse hover:bg-primary/30 transition-all"
-         >
-           <VolumeX size={18} />
-           <span className="text-[10px] font-black uppercase tracking-[0.2em]">Clique aqui para ativar o som de novos pedidos</span>
-         </button>
-       )}
-       {isAudioEnabled && (
-         <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-500 px-4 py-1.5 rounded-xl flex items-center justify-center gap-2">
-            <Volume2 size={12} />
-            <span className="text-[9px] font-bold uppercase tracking-widest">Som de alertas ativo</span>
-         </div>
-       )}
-
-       {/* OVERLAY DE FEEDBACK UX */}
-       {isGeneratingPdf && (
-           <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center backdrop-blur-sm animate-in fade-in duration-200">
-               <div className="bg-[#161618] border border-white/10 p-6 rounded-2xl flex items-center gap-4 shadow-2xl scale-110">
-                   <Loader2 className="text-primary animate-spin" size={24} />
-                   <div className="flex flex-col">
-                       <span className="text-white font-bold text-xs uppercase tracking-widest">Gerando PDF da Comanda...</span>
-                       <span className="text-gray-500 text-[10px] uppercase font-bold mt-1">O download iniciará em breve</span>
-                   </div>
-               </div>
-           </div>
-       )}
-
-       {/* CONTEÚDO DA COMANDA PARA PDF (Off-screen) */}
-       {printingOrder && (
-           <div style={{ position: 'fixed', left: '-1000mm', top: '0', zIndex: -100 }}>
-               <div id="printable-receipt-pdf" className="text-black bg-white p-8 font-mono w-[80mm] leading-tight">
-                    <div className="text-center mb-6 pb-4 border-b-2 border-dashed border-black">
-                        <h2 className="text-xl font-bold uppercase m-0">{tenant.name}</h2>
-                        <div className="text-[10px] mt-2 font-bold">{new Date(printingOrder.createdAt).toLocaleString('pt-BR')}</div>
-                    </div>
-                    
-                    <div className="mb-6 text-center">
-                        <div className="text-[10px] uppercase font-black tracking-widest text-gray-600 mb-1">Pedido</div>
-                        <div className="text-4xl font-black uppercase tracking-tighter">#{printingOrder.orderNumber}</div>
-                        <div className="text-[11px] uppercase font-bold mt-2 bg-black text-white px-2 py-1 inline-block">{printingOrder.type === 'delivery' ? 'DELIVERY' : `MESA ${printingOrder.tableNumber || ''}`}</div>
-                    </div>
-
-                    <div className="mb-6 text-[12px] space-y-2 border-b border-black pb-4">
-                        <div><strong className="text-[10px] text-gray-600">CLIENTE:</strong> <span className="font-bold">{printingOrder.customerName}</span></div>
-                        {printingOrder.address && (
-                            <div className="mt-2 border border-black p-2 bg-gray-50">
-                                <strong className="text-[10px]">ENDEREÇO:</strong><br/>
-                                <span className="font-bold">{printingOrder.address}</span>
-                            </div>
-                        )}
-                        {printingOrder.observation && (
-                            <div className="mt-2 text-red-600"><strong>OBS:</strong> {printingOrder.observation}</div>
-                        )}
-                    </div>
-
-                    <div className="text-[10px] font-black uppercase tracking-widest mb-3">Resumo dos Itens</div>
-                    <div className="space-y-4 mb-8">
-                        {printingOrder.items.map((item, idx) => (
-                            <div key={idx} className="text-[12px]">
-                                <div className="flex justify-between items-start font-bold">
-                                    <span className="flex-1">{item.quantity}x {item.name}</span>
-                                    <span className="ml-2">R$ {(item.price * item.quantity).toFixed(2)}</span>
-                                </div>
-                                {item.itemObservation && (
-                                    <div className="text-[11px] italic mt-1 ml-4 border-l-2 border-gray-300 pl-2">{'>>'} {item.itemObservation}</div>
-                                )}
-                                {item.extras && item.extras.length > 0 && (
-                                    <div className="text-[11px] mt-1 ml-4 text-gray-600">+ {item.extras.join(', ')}</div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-
-                    <div className="border-t-4 border-double border-black pt-3 flex justify-between items-center mb-8">
-                        <span className="text-sm font-bold uppercase">VALOR TOTAL:</span>
-                        <span className="text-2xl font-black">R$ {printingOrder.total.toFixed(2)}</span>
-                    </div>
-
-                    <div className="text-center text-[10px] uppercase font-bold mt-12 border-t border-dashed border-black pt-6">
-                        OBRIGADO PELA PREFERÊNCIA!<br/>
-                        *** VOLTE SEMPRE ***
-                    </div>
-               </div>
-           </div>
-       )}
-
-       <div className="flex justify-between items-center mb-2 flex-shrink-0">
-          <div className="flex gap-2">
-            <button onClick={() => setOrderFilter('all')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${orderFilter === 'all' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-[#161618] text-gray-400 border border-white/5 hover:bg-white/5'}`}>Todos</button>
-            <button onClick={() => setOrderFilter('delivery')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${orderFilter === 'delivery' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-[#161618] text-gray-400 border border-white/5 hover:bg-white/5'}`}><Bike size={14}/> Delivery</button>
-            <button onClick={() => setOrderFilter('local')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${orderFilter === 'local' ? 'bg-primary text-white shadow-lg shadow-primary/20' : 'bg-[#161618] text-gray-400 border border-white/5 hover:bg-white/5'}`}><Utensils size={14}/> Mesa</button>
+       <div className="flex items-center justify-between bg-[#161618] border border-white/5 p-3 rounded-2xl px-6">
+          <div className="flex items-center gap-6">
+              <button 
+                onClick={() => setIsAudioEnabled(!isAudioEnabled)}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${isAudioEnabled ? 'bg-primary/20 text-primary border border-primary/30 shadow-[0_0_15px_rgba(249,115,22,0.1)]' : 'bg-white/5 text-gray-500 border border-white/5'}`}
+              >
+                {isAudioEnabled ? <Volume2 size={16} /> : <VolumeX size={16} />}
+                {isAudioEnabled ? 'Alertas: LIGADOS' : 'Alertas: MUDO'}
+              </button>
+              {!isAudioUnlocked && isAudioEnabled && (
+                <div className="flex items-center gap-2 text-yellow-500 text-[10px] font-bold uppercase animate-pulse">
+                   <AlertTriangle size={14} />
+                   <span>Clique no painel para habilitar o som</span>
+                </div>
+              )}
           </div>
           <div className="flex items-center gap-3">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" size={14} />
-              <input 
-                type="text" 
-                placeholder="Buscar por # ou Nome..." 
-                value={orderSearch} 
-                onChange={e => setOrderSearch(e.target.value)} 
-                className="bg-[#161618] border border-white/5 rounded-lg pl-9 pr-4 py-2 text-xs text-white focus:outline-none focus:border-primary/50 w-64 transition-all" 
-              />
-              {orderSearch && (
-                <button onClick={() => setOrderSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white">
-                  <XCircle size={14} />
-                </button>
-              )}
-            </div>
+             <div className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)] animate-pulse" />
+             <span className="text-[10px] font-black uppercase text-gray-400 tracking-widest">KDS Realtime Ativo</span>
           </div>
        </div>
 
-       <div className="flex-1 overflow-x-auto pb-4 custom-scrollbar">
-         <div className="flex gap-4 h-full min-w-[1000px]"> 
+       <div className="flex justify-between items-center gap-2 flex-shrink-0">
+          <div className="flex gap-2">
+            <button onClick={() => setOrderFilter('all')} className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all ${orderFilter === 'all' ? 'bg-primary text-white shadow-xl shadow-primary/20' : 'bg-[#161618] text-gray-500 border border-white/5'}`}>Todos</button>
+            <button onClick={() => setOrderFilter('delivery')} className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${orderFilter === 'delivery' ? 'bg-primary text-white shadow-xl shadow-primary/20' : 'bg-[#161618] text-gray-500 border border-white/5'}`}><Bike size={14}/> Delivery</button>
+            <button onClick={() => setOrderFilter('local')} className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-widest transition-all flex items-center gap-2 ${orderFilter === 'local' ? 'bg-primary text-white shadow-xl shadow-primary/20' : 'bg-[#161618] text-gray-500 border border-white/5'}`}><Utensils size={14}/> Mesa</button>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
+            <input type="text" placeholder="BUSCAR PEDIDO OU NOME..." value={orderSearch} onChange={e => setOrderSearch(e.target.value)} className="bg-[#161618] border border-white/5 rounded-xl pl-11 pr-4 py-2.5 text-xs text-white focus:outline-none focus:border-primary/50 w-72 font-bold" />
+          </div>
+       </div>
+
+       <div className="flex-1 overflow-x-auto pb-6 custom-scrollbar">
+         <div className="flex gap-4 h-full min-w-[1100px]"> 
            {columns.map(col => (
-             <div key={col.id} className="flex-1 flex flex-col bg-[#161618]/50 border border-white/5 rounded-2xl h-full overflow-hidden backdrop-blur-sm shadow-inner">
-                <div className={`p-4 border-b border-white/5 flex justify-between items-center bg-[#161618]/80 ${col.color.replace('border', 'border-b-2')}`}>
-                   <div className="flex items-center gap-2">
-                     <h3 className="font-black text-white uppercase tracking-wider text-xs">{col.title}</h3>
-                   </div>
-                   <span className="bg-white/10 text-white text-[10px] font-bold px-2.5 py-1 rounded-lg">{col.orders.length}</span>
+             <div key={col.id} className="flex-1 flex flex-col bg-[#09090B] border border-white/5 rounded-[28px] h-full overflow-hidden shadow-2xl">
+                <div className={`p-5 border-b border-white/5 flex justify-between items-center bg-[#161618]/50 ${col.color.replace('border', 'border-b-4')}`}>
+                   <h3 className="font-black text-white uppercase tracking-[0.2em] text-[10px]">{col.title}</h3>
+                   <span className="bg-white/10 text-white text-[10px] font-black px-3 py-1 rounded-full">{col.orders.length}</span>
                 </div>
                 
-                <div className="p-3 overflow-y-auto space-y-3 flex-1 custom-scrollbar">
+                <div className="p-4 overflow-y-auto space-y-4 flex-1 custom-scrollbar">
                    {col.orders.map(order => {
-                      const mins = getTimeElapsed(order.createdAt);
-                      let timerColor = 'text-green-500', timerBg = 'bg-green-500/10';
-                      if (mins > 45) { timerColor = 'text-red-500'; timerBg = 'bg-red-500/10 animate-pulse'; }
-                      else if (mins > 20) { timerColor = 'text-yellow-500'; timerBg = 'bg-yellow-500/10'; }
-                      
+                      const isNew = recentOrderIds.has(order.id);
                       return (
-                        <div key={order.id} className="bg-[#161618] border border-white/10 rounded-xl p-4 shadow-lg hover:border-primary/30 transition-all group relative animate-in zoom-in-95 duration-200">
-                           <div className="flex justify-between items-start mb-3 pb-3 border-b border-white/5">
+                        <div 
+                          key={order.id} 
+                          className={`bg-[#161618] border rounded-2xl p-5 shadow-lg transition-all group relative animate-in zoom-in-95 duration-300 
+                            ${isNew ? 'border-primary ring-4 ring-primary/10 shadow-primary/30 z-10' : 'border-white/5 hover:border-white/10'}`}
+                        >
+                           {isNew && (
+                             <div className="absolute -top-3 -right-3 bg-primary text-white p-2 rounded-xl shadow-2xl z-20 animate-bounce">
+                                <Sparkles size={16} fill="currentColor" />
+                             </div>
+                           )}
+                           
+                           <div className="flex justify-between items-start mb-4 pb-4 border-b border-white/5">
                               <div className="flex-1 min-w-0">
-                                 <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-black text-white text-sm truncate">#{order.orderNumber}</span>
-                                    {order.type === 'delivery' ? <div className="bg-blue-500/10 text-blue-400 p-1 rounded flex-shrink-0"><Bike size={12}/></div> : <div className="bg-orange-500/10 text-orange-400 p-1 rounded flex-shrink-0"><Utensils size={12}/></div>}
-                                    <button 
-                                        onClick={() => handlePrint(order)}
-                                        disabled={isGeneratingPdf}
-                                        className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded transition-colors ml-1 disabled:opacity-30"
-                                        title="Gerar PDF da Comanda"
-                                    >
-                                        <Printer size={12} />
-                                    </button>
+                                 <div className="flex items-center gap-2 mb-1.5">
+                                    <span className="font-black text-white text-lg tracking-tighter">#{order.orderNumber}</span>
+                                    {order.type === 'delivery' ? <Bike size={14} className="text-blue-400"/> : <Utensils size={14} className="text-orange-400"/>}
+                                    <button onClick={() => handlePrint(order)} className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-all"><Printer size={14} /></button>
                                  </div>
-                                 <p className="text-[11px] font-bold text-gray-400 truncate pr-2">{order.customerName || 'Cliente sem nome'}</p>
+                                 <p className="text-[11px] font-black text-gray-400 uppercase tracking-widest truncate">{order.customerName}</p>
                               </div>
-                              <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg font-mono font-bold text-xs flex-shrink-0 ${timerColor} ${timerBg}`}><Clock size={12} /> {mins} min</div>
+                              <div className="text-[10px] font-black text-gray-600 uppercase tracking-tighter">
+                                {new Date(order.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </div>
                            </div>
                            
-                           <div className="space-y-3 mb-4">
+                           <div className="space-y-4 mb-6">
                               {(order.items || []).map((item, idx) => (
-                                 <div key={idx} className="flex items-start gap-3 text-sm group/item cursor-pointer" onClick={() => toggleItemCheck(order.id, idx)}>
-                                    <button className={`mt-0.5 w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center transition-all ${checkedItems[order.id]?.[idx] ? 'bg-green-500 border-green-500 text-white shadow-lg shadow-green-500/20' : 'border-white/20 text-transparent group-hover/item:border-white/40'}`}><Check size={10} strokeWidth={4} /></button>
-                                    <div className={`flex-1 transition-opacity ${checkedItems[order.id]?.[idx] ? 'opacity-30' : 'opacity-100'}`}>
-                                       <div className="flex gap-2"><span className="font-black text-white">{item.quantity}x</span><span className="text-gray-300 text-xs font-medium leading-tight">{item.name}</span></div>
-                                       {(item.itemObservation || order.observation) && (
-                                         <div className="bg-yellow-500/10 border-l-2 border-yellow-500 pl-2 py-1 mt-1.5">
-                                           <p className="text-[10px] font-bold text-yellow-500 uppercase leading-relaxed flex items-start gap-1">
-                                             <AlertTriangle size={10} className="mt-0.5 flex-shrink-0" /> 
-                                             <span className="line-clamp-2">{item.itemObservation || order.observation}</span>
-                                           </p>
+                                 <div key={idx} className="flex items-start gap-3">
+                                    <div className="w-6 h-6 rounded-lg bg-primary/10 border border-primary/20 flex items-center justify-center text-primary font-black text-[10px] flex-shrink-0">{item.quantity}x</div>
+                                    <div className="flex-1">
+                                       <div className="text-gray-200 text-xs font-bold uppercase tracking-tight">{item.name}</div>
+                                       {item.itemObservation && (
+                                         <div className="text-[10px] font-black text-yellow-500 uppercase mt-1.5 bg-yellow-500/5 p-2 rounded-lg border-l-2 border-yellow-500">
+                                           {'>>'} {item.itemObservation}
                                          </div>
                                        )}
                                     </div>
@@ -329,43 +208,23 @@ const DashboardOrders: React.FC<DashboardOrdersProps> = ({ orders = [], updateOr
                               ))}
                            </div>
                            
-                           <div className="pt-3 border-t border-white/5 flex flex-col gap-2">
-                              <div className="flex justify-between items-center mb-1"><span className="text-[10px] font-bold uppercase text-gray-500">Total</span><span className="text-xs font-black text-white">R$ {(order.total || 0).toFixed(2)}</span></div>
+                           <div className="pt-4 border-t border-white/5 flex flex-col gap-3">
+                              <div className="flex justify-between items-center"><span className="text-[10px] font-black uppercase text-gray-500 tracking-widest">Valor Total</span><span className="text-sm font-black text-white">R$ {(order.total || 0).toFixed(2)}</span></div>
                               <div className="flex gap-2">
-                                 {col.id === 'pending' && (
-                                   <button onClick={() => updateOrderStatus(order.id, 'preparing')} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors shadow-lg shadow-blue-900/20 flex items-center justify-center gap-2">
-                                     <Flame size={14} /> Preparar
-                                   </button>
-                                 )}
-                                 {col.id === 'preparing' && (
-                                   <button onClick={() => updateOrderStatus(order.id, 'ready_to_send')} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors shadow-lg shadow-green-900/20 flex items-center justify-center gap-2">
-                                     <CheckCircle2 size={14} /> Pronto
-                                   </button>
-                                 )}
+                                 {col.id === 'pending' && (<button onClick={() => updateOrderStatus(order.id, 'preparing')} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"><Flame size={14} /> Começar Preparo</button>)}
+                                 {col.id === 'preparing' && (<button onClick={() => updateOrderStatus(order.id, 'ready_to_send')} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"><CheckCircle2 size={14} /> Marcar Pronto</button>)}
                                  {col.id === 'ready_to_send' && (
-                                   <>
-                                     {order.type === 'delivery' && (
-                                       <button onClick={() => handleDispatchDelivery(order)} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors shadow-lg shadow-emerald-900/20 flex items-center justify-center gap-2">
-                                         <Bike size={14} /> WhatsApp
-                                       </button>
-                                     )}
-                                     <button onClick={() => updateOrderStatus(order.id, 'finished')} className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white py-2.5 rounded-lg text-[10px] font-bold uppercase tracking-widest transition-colors flex items-center justify-center gap-2 border border-white/5">
-                                       <Archive size={14} /> Concluir
-                                     </button>
-                                   </>
+                                   <button onClick={() => updateOrderStatus(order.id, 'finished')} className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2"><Archive size={14} /> Finalizar & Limpar</button>
                                  )}
                               </div>
                            </div>
                         </div>
                       );
                    })}
-                   
                    {col.orders.length === 0 && (
-                     <div className="h-full flex flex-col items-center justify-center opacity-20 min-h-[200px]">
-                        <div className="p-4 rounded-full bg-white/5 mb-3 border border-white/5">
-                          <ShoppingBag size={24} />
-                        </div>
-                        <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Nenhum pedido aqui</p>
+                     <div className="h-full flex flex-col items-center justify-center opacity-20 py-20 grayscale">
+                        <ShoppingBag size={48} className="mb-4" />
+                        <p className="text-[10px] font-black uppercase tracking-[0.3em]">Fila Vazia</p>
                      </div>
                    )}
                 </div>

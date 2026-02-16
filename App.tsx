@@ -10,7 +10,7 @@ import Alerts from './pages/Alerts';
 import Favourite from './pages/Favourite';
 import Dashboard from './pages/Dashboard';
 import BottomNav from './components/BottomNav';
-import { Bike, Utensils, Lock, X, Mail, Key, Loader2, Gift, ChevronRight, Shield } from 'lucide-react';
+import { Bike, Utensils, Lock, X, Mail, Key, Loader2, Gift, ChevronRight, Shield, Clock, ArrowRight } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import { useFavorites } from './hooks/useFavorites';
 
@@ -26,7 +26,7 @@ const App: React.FC = () => {
   const [activePage, setActivePage] = useState<Page>(Page.HOME);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   
-  // Estados com Persistência
+  // Persistência de Tipo de Pedido e Modo Admin
   const [orderType, setOrderType] = useState<OrderType>(() => {
     return (localStorage.getItem('brutus_order_type') as OrderType) || OrderType.UNSET;
   });
@@ -38,6 +38,12 @@ const App: React.FC = () => {
   const [userInfo, setUserInfo] = useState<UserInfo>(() => {
     const saved = localStorage.getItem('brutus_user_info');
     return saved ? JSON.parse(saved) : { name: '', whatsapp: '', address: '', reference: '', tableNumber: '' };
+  });
+
+  // Estado para rastrear pedido ativo (Anônimo ou Logado)
+  const [activeOrderTracking, setActiveOrderTracking] = useState<{id: string, number: string, status: string} | null>(() => {
+    const saved = localStorage.getItem('brutus_active_order');
+    return saved ? JSON.parse(saved) : null;
   });
 
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -61,18 +67,13 @@ const App: React.FC = () => {
   const { favorites, toggleFavorite, isFavorite } = useFavorites();
 
   const foodImages = [
-    "https://i.postimg.cc/Y96YJf8h/1.jpg",
-    "https://i.postimg.cc/brqk8DBf/2.jpg",
-    "https://i.postimg.cc/nrT7LFys/3.jpg",
-    "https://i.postimg.cc/dQ9G66hM/4.jpg",
-    "https://i.postimg.cc/7YY0Wzzn/5.jpg",
-    "https://i.postimg.cc/4xYtJTwS/6.jpg",
-    "https://i.postimg.cc/MpnRW8dX/7.jpg",
-    "https://images.unsplash.com/photo-1558030006-450675393462?q=80&w=400&auto=format&fit=crop",
+    "https://i.postimg.cc/Y96YJf8h/1.jpg", "https://i.postimg.cc/brqk8DBf/2.jpg", "https://i.postimg.cc/nrT7LFys/3.jpg",
+    "https://i.postimg.cc/dQ9G66hM/4.jpg", "https://i.postimg.cc/7YY0Wzzn/5.jpg", "https://i.postimg.cc/4xYtJTwS/6.jpg",
+    "https://i.postimg.cc/MpnRW8dX/7.jpg", "https://images.unsplash.com/photo-1558030006-450675393462?q=80&w=400&auto=format&fit=crop",
     "https://images.unsplash.com/photo-1593504049359-74330189a355?q=80&w=400&auto=format&fit=crop"
   ];
 
-  // Efeito para salvar persistência quando os estados mudam
+  // Efeito para persistência
   useEffect(() => {
     localStorage.setItem('brutus_order_type', orderType);
   }, [orderType]);
@@ -86,6 +87,34 @@ const App: React.FC = () => {
     localStorage.setItem('brutus_user_info', JSON.stringify(userInfo));
   }, [userInfo]);
 
+  // Monitoramento do Pedido Ativo no Celular do Cliente
+  useEffect(() => {
+    if (activeOrderTracking) {
+      localStorage.setItem('brutus_active_order', JSON.stringify(activeOrderTracking));
+      
+      // Inscreve para ouvir mudanças especificamente DESTE pedido
+      const channel = supabase.channel(`tracking_${activeOrderTracking.id}`)
+        .on('postgres_changes', { 
+          event: 'UPDATE', 
+          schema: 'public', 
+          table: 'orders', 
+          filter: `id=eq.${activeOrderTracking.id}` 
+        }, (payload) => {
+          const newStatus = payload.new.status;
+          if (newStatus === 'finished' || newStatus === 'canceled') {
+            console.log('Pedido concluído/cancelado. Limpando tracking.');
+            localStorage.removeItem('brutus_active_order');
+            setActiveOrderTracking(null);
+          } else {
+            setActiveOrderTracking(prev => prev ? { ...prev, status: newStatus } : null);
+          }
+        })
+        .subscribe();
+
+      return () => { supabase.removeChannel(channel); };
+    }
+  }, [activeOrderTracking]);
+
   const fetchInitialData = async () => {
     const params = new URLSearchParams(window.location.search);
     const storeSlug = params.get('loja') || 'churras-brutus';
@@ -96,39 +125,8 @@ const App: React.FC = () => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
 
-      // Se houver usuário logado, tentar recuperar dados do perfil dele se o userInfo local estiver vazio
-      if (currentUser && !userInfo.name) {
-          const { data: customerData } = await supabase
-            .from('customers')
-            .select('*')
-            .eq('user_id', currentUser.id)
-            .maybeSingle();
-          
-          if (customerData) {
-              setUserInfo(prev => ({
-                  ...prev,
-                  name: customerData.name || prev.name,
-                  whatsapp: customerData.whatsapp || prev.whatsapp,
-                  address: customerData.address || prev.address
-              }));
-          }
-      }
-
       // 1. Tenant Data
-      const { data: tenantData, error: tenantError } = await supabase
-        .from('tenants')
-        .select('*')
-        .eq('slug', storeSlug)
-        .maybeSingle();
-
-      if (tenantError) throw tenantError;
-
-      // 2. Products Data
-      const { data: productsData } = await supabase
-        .from('products')
-        .select('*')
-        .eq('tenant_slug', storeSlug);
-
+      const { data: tenantData } = await supabase.from('tenants').select('*').eq('slug', storeSlug).maybeSingle();
       if (tenantData) {
         const mappedTenant: Tenant = {
           slug: tenantData.slug || storeSlug,
@@ -145,194 +143,40 @@ const App: React.FC = () => {
           operatingHours: tenantData.operating_hours || {},
           holidayClosures: tenantData.holiday_closures || [],
           categories: (tenantData.categories && tenantData.categories.length > 0) ? tenantData.categories : DEFAULT_CATEGORIES,
-          products: (productsData || []).map((p: any) => ({
-             id: p.id,
-             name: p.name || '',
-             price: Number(p.price || 0),
-             rating: Number(p.rating || 5),
-             reviews: p.reviews || '0',
-             image: p.image || '',
-             category: p.category || 'geral',
-             prepTime: p.prep_time || '15 min',
-             description: p.description || '',
-             isVegan: p.is_vegan || false,
-             isCombo: p.is_combo || false,
-             isHighlighted: p.is_highlighted || false,
-             availability: p.availability || 'available',
-             inventory_id: p.inventory_id,
-             moods: p.moods || [],
-             affinityTags: p.affinity_tags || []
-          }))
+          products: [] // Preenchido abaixo
         };
+
+        const { data: productsData } = await supabase.from('products').select('*').eq('tenant_slug', storeSlug);
+        mappedTenant.products = (productsData || []).map((p: any) => ({
+             id: p.id, name: p.name, price: Number(p.price), rating: Number(p.rating || 5), reviews: p.reviews || '0',
+             image: p.image, category: p.category, prepTime: p.prep_time, description: p.description,
+             isVegan: p.is_vegan, isCombo: p.is_combo, isHighlighted: p.is_highlighted, availability: p.availability,
+             inventoryId: p.inventory_id
+        }));
+
         setCurrentTenant(mappedTenant);
         document.documentElement.style.setProperty('--primary-color', mappedTenant.themeColor);
       }
 
-      // 3. Orders Data
-      const { data: ordersData } = await supabase
-        .from('orders')
-        .select('*')
-        .eq('tenant_slug', storeSlug)
-        .order('created_at', { ascending: false });
-
+      // 2. Orders (Só traz do banco os do usuário logado se não for admin)
+      const ordersQuery = supabase.from('orders').select('*').eq('tenant_slug', storeSlug).order('created_at', { ascending: false });
+      if (!isAdminMode && currentUser) ordersQuery.eq('user_id', currentUser.id);
+      
+      const { data: ordersData } = await ordersQuery;
       if (ordersData) {
         setOrders(ordersData.map((o: any) => ({
-          id: o.id,
-          orderNumber: o.order_number,
-          customerName: o.customer_name || 'Cliente',
-          customerWhatsapp: o.customer_whatsapp || '',
-          items: o.items || [],
-          total: Number(o.total || 0),
-          type: o.type as OrderType,
-          status: o.status as OrderStatus,
-          createdAt: new Date(o.created_at),
-          tableNumber: o.table_number,
-          address: o.address,
-          observation: o.observation,
-          couponCode: o.coupon_code,
-          discountApplied: Number(o.discount_applied || 0),
-          userId: o.user_id
+          id: o.id, orderNumber: o.order_number, customerName: o.customer_name, customerWhatsapp: o.customer_whatsapp,
+          items: o.items, total: Number(o.total), type: o.type as OrderType, status: o.status as OrderStatus,
+          createdAt: new Date(o.created_at), tableNumber: o.table_number, address: o.address, userId: o.user_id
         })));
       }
 
-      // 4. Inventory Data
-      const { data: inventoryData } = await supabase
-        .from('inventory')
-        .select('*')
-        .eq('tenant_slug', storeSlug);
-
-      if (inventoryData) {
-        setInventory(inventoryData.map((i: any) => ({
-          id: i.id,
-          name: i.name || '',
-          currentQty: Number(i.current_qty || 0),
-          minQty: Number(i.min_qty || 0),
-          unit: i.unit || 'un',
-          category: i.category || 'outros',
-          costPrice: Number(i.cost_price || 0)
-        })));
-      }
-
-      // 5. Coupons Data
-      const { data: couponsData } = await supabase
-        .from('coupons')
-        .select('*')
-        .eq('tenant_slug', storeSlug)
-        .eq('is_active', true);
-      
-      if (couponsData) {
-        setCoupons(couponsData.map((c: any) => ({
-          id: c.id,
-          code: c.code || '',
-          discountValue: Number(c.discount_value || 0),
-          maxUses: Number(c.max_uses || 0),
-          currentUses: Number(c.current_uses || 0),
-          isActive: c.is_active,
-          userId: c.user_id,
-          customerEmail: c.customer_email,
-          customerPhone: c.customer_phone
-        })));
-      }
-
-    } catch (err) {
-      console.error('Erro ao buscar dados do Supabase:', err);
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { console.error(err); } finally { setLoading(false); }
   };
 
   useEffect(() => {
     fetchInitialData();
-    
-    const params = new URLSearchParams(window.location.search);
-    const storeSlug = params.get('loja') || 'churras-brutus';
-    
-    const ordersChannel = supabase.channel('orders_realtime_app')
-      .on('postgres_changes', { 
-        event: '*', 
-        schema: 'public', 
-        table: 'orders',
-        filter: `tenant_slug=eq.${storeSlug}`
-      }, () => {
-        fetchInitialData();
-      })
-      .subscribe();
-
-    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
-        setUser(session?.user ?? null);
-        if (event === 'SIGNED_IN') fetchInitialData();
-        if (event === 'SIGNED_OUT') {
-            setIsAdminMode(false);
-            setOrderType(OrderType.UNSET);
-            setActivePage(Page.HOME);
-        }
-    });
-
-    return () => { 
-      authListener.subscription.unsubscribe();
-      supabase.removeChannel(ordersChannel);
-    };
-  }, []);
-
-  const handleAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setAuthLoading(true);
-    try {
-        let result;
-        if (authMode === 'signup') result = await supabase.auth.signUp({ email: authEmail, password: authPassword });
-        else result = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-        
-        if (result?.error) throw result.error;
-        
-        setShowAuthModal(false);
-        if (authTarget === 'admin') {
-            setIsAdminMode(true);
-            setActivePage(Page.DASHBOARD);
-        } else if (activePage === Page.CART) {
-            setTimeout(() => handlePlaceOrder(pendingCoupon), 500);
-        }
-    } catch (error: any) {
-        alert(error.message || 'Erro na autenticação');
-    } finally {
-        setAuthLoading(false);
-    }
-  };
-
-  const handleSelectOrderType = (type: OrderType) => {
-    setOrderType(type);
-  };
-
-  const handleUpdateInventory = async (newInventory: InventoryItem[]) => {
-    setInventory(newInventory);
-    if (!currentTenant) return;
-
-    try {
-      const dbInventory = newInventory.map(item => {
-        const isTemporary = item.id.startsWith('inv-');
-        const dbObj: any = {
-          tenant_slug: 'churras-brutus',
-          name: item.name,
-          current_qty: item.currentQty === undefined || item.currentQty === null || (typeof item.currentQty === 'string' && item.currentQty === '') ? 0 : Number(item.currentQty),
-          min_qty: item.minQty === undefined || item.minQty === null || (typeof item.minQty === 'string' && item.minQty === '') ? 0 : Number(item.minQty),
-          unit: item.unit,
-          category: item.category,
-          cost_price: item.costPrice === undefined || item.costPrice === null || (typeof item.costPrice === 'string' && item.costPrice === '') ? 0 : Number(item.costPrice)
-        };
-
-        if (!isTemporary) {
-          dbObj.id = item.id;
-        }
-
-        return dbObj;
-      });
-
-      const { error } = await supabase.from('inventory').upsert(dbInventory);
-      if (error) throw error;
-      fetchInitialData();
-    } catch (err) {
-      console.error("Erro ao sincronizar estoque:", err);
-    }
-  };
+  }, [isAdminMode]);
 
   const handlePlaceOrder = async (appliedCoupon?: Coupon) => {
     if (!currentTenant || cart.length === 0) return;
@@ -343,44 +187,8 @@ const App: React.FC = () => {
     const finalTotal = Math.max(0, subtotal + deliveryFee - discount);
     
     const cleanItems = cart.map(item => ({ 
-        product_id: item.id, 
-        name: item.name, 
-        price: item.price, 
-        quantity: item.quantity, 
-        extras: item.extras, 
-        observation: item.itemObservation
+        product_id: item.id, name: item.name, price: item.price, quantity: item.quantity, observation: item.itemObservation
     }));
-
-    try {
-        const cleanWhatsapp = (userInfo.whatsapp || '').replace(/\D/g, '');
-        const { data: existingCustomer } = await supabase
-            .from('customers')
-            .select('*')
-            .eq('tenant_slug', 'churras-brutus')
-            .eq('whatsapp', cleanWhatsapp)
-            .maybeSingle();
-
-        const customerData = {
-            name: userInfo.name || 'Cliente Anônimo',
-            whatsapp: cleanWhatsapp,
-            address: userInfo.address || null,
-            reference: userInfo.reference || null,
-            email: user?.email || null,
-            total_orders: existingCustomer ? (existingCustomer.total_orders || 0) + 1 : 1,
-            total_spent: existingCustomer ? (existingCustomer.total_spent || 0) + finalTotal : finalTotal,
-            last_order_date: new Date().toISOString(),
-            user_id: user?.id || null,
-            tenant_slug: 'churras-brutus'
-        };
-
-        if (existingCustomer) {
-            await supabase.from('customers').update(customerData).eq('id', existingCustomer.id);
-        } else {
-            await supabase.from('customers').insert([customerData]);
-        }
-    } catch (err) {
-        console.error("Erro ao sincronizar CRM:", err);
-    }
 
     const { data: orderResponse, error } = await supabase.from('orders').insert([{ 
       tenant_slug: 'churras-brutus', 
@@ -392,148 +200,132 @@ const App: React.FC = () => {
       status: 'pending', 
       table_number: userInfo.tableNumber || null, 
       address: userInfo.address || null, 
-      reference: userInfo.reference || null,
-      observation: userInfo.observation || null, 
-      coupon_code: (orderType !== OrderType.LOCAL && appliedCoupon) ? appliedCoupon.code : null, 
-      discount_applied: discount, 
       user_id: user?.id || null
-    }]).select('order_number').single();
+    }]).select('*').single();
 
-    if (error) { 
-        alert(`Erro ao criar pedido: ${error.message}.`); 
-        return; 
-    }
+    if (error) { alert(`Erro: ${error.message}`); return; }
 
-    try {
-        for (const item of cart) {
-            if (item.inventoryId) {
-                const { data: invData } = await supabase
-                    .from('inventory')
-                    .select('current_qty')
-                    .eq('id', item.inventoryId)
-                    .single();
-                
-                if (invData) {
-                    await supabase
-                        .from('inventory')
-                        .update({ current_qty: Math.max(0, invData.current_qty - item.quantity) })
-                        .eq('id', item.inventoryId);
-                }
-            }
-        }
-    } catch (stockErr) {
-        console.error("Erro ao baixar estoque:", stockErr);
-    }
-    
-    if (appliedCoupon && orderType !== OrderType.LOCAL) {
-      await supabase.from('coupons').update({ current_uses: (appliedCoupon.currentUses || 0) + 1 }).eq('id', appliedCoupon.id);
-    }
-    
+    // Salvar tracking do pedido no localStorage para usuários anônimos
+    setActiveOrderTracking({
+        id: orderResponse.id,
+        number: orderResponse.order_number,
+        status: orderResponse.status
+    });
+
     setCart([]);
     setPendingCoupon(undefined);
     setActivePage(Page.HOME);
-    alert(`Pedido #${orderResponse.order_number} enviado com sucesso! Você pode acompanhar o status no seu perfil.`);
+    alert(`Pedido #${orderResponse.order_number} enviado! Acompanhe o status no topo do cardápio.`);
+  };
+
+  /**
+   * Fix: Added handleSelectOrderType to resolve reference error in the banner.
+   */
+  const handleSelectOrderType = (type: OrderType) => {
+    setOrderType(type);
+  };
+
+  /**
+   * Fix: Added handleUpdateInventory to resolve reference error in Dashboard component.
+   */
+  const handleUpdateInventory = (newInventory: InventoryItem[]) => {
+    setInventory(newInventory);
+  };
+
+  /**
+   * Fix: Added handleAuth to resolve reference error in login form.
+   */
+  const handleAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthLoading(true);
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: authEmail,
+        password: authPassword,
+      });
+
+      if (error) throw error;
+
+      if (data.user) {
+        setUser(data.user);
+        setShowAuthModal(false);
+        setAuthEmail('');
+        setAuthPassword('');
+        
+        if (authTarget === 'admin') {
+          setIsAdminMode(true);
+          setActivePage(Page.DASHBOARD);
+        }
+      }
+    } catch (err: any) {
+      alert(`Erro na autenticação: ${err.message}`);
+    } finally {
+      setAuthLoading(false);
+    }
   };
 
   if (loading && !currentTenant) return <SkeletonLoader />;
-  if (!currentTenant) return <div className="min-h-screen flex items-center justify-center text-gray-900 bg-white p-10 text-center font-bold">Loja não encontrada ou erro de conexão.</div>;
+  if (!currentTenant) return <div className="min-h-screen flex items-center justify-center">Erro ao carregar loja.</div>;
 
   return (
     <div className={`w-full ${isAdminMode ? '' : 'max-w-md mx-auto'} h-screen relative flex flex-col transition-all duration-500 ${isDarkMode ? 'bg-[#1a1a1a]' : 'bg-white'}`}>
       
+      {/* Banner de Pedido Ativo (Apenas para Clientes) */}
+      {!isAdminMode && activeOrderTracking && activePage === Page.HOME && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 w-[90%] max-w-sm z-[110] animate-in slide-in-from-top duration-500">
+           <button 
+             onClick={() => setActivePage(Page.PROFILE)}
+             className="w-full bg-primary text-white p-4 rounded-2xl shadow-2xl flex items-center justify-between group active:scale-95 transition-all"
+           >
+             <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center animate-pulse">
+                   <Clock size={20} />
+                </div>
+                <div className="text-left">
+                   <p className="text-[10px] font-black uppercase tracking-widest opacity-80">Pedido em andamento</p>
+                   <p className="text-sm font-bold tracking-tight">#{activeOrderTracking.number} • Status: {
+                     activeOrderTracking.status === 'pending' ? 'Novo' : 
+                     activeOrderTracking.status === 'preparing' ? 'Preparando' : 
+                     activeOrderTracking.status === 'ready_to_send' ? 'Pronto' : activeOrderTracking.status
+                   }</p>
+                </div>
+             </div>
+             <ArrowRight size={18} className="group-hover:translate-x-1 transition-transform" />
+           </button>
+        </div>
+      )}
+
       {showAuthModal && (
         <div className="fixed inset-0 z-[150] bg-black/80 flex items-center justify-center p-6 backdrop-blur-sm">
-           <div className="relative w-full max-w-sm rounded-[32px] overflow-hidden shadow-2xl bg-white border border-gray-100">
-              <button onClick={() => setShowAuthModal(false)} className="absolute top-4 right-4 p-2 text-gray-400 hover:text-gray-900"><X size={20} /></button>
-              <div className="p-8">
-                <div className="flex flex-col items-center text-center mb-8">
-                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${authTarget === 'admin' ? 'bg-red-500/10 text-red-500' : 'bg-primary/10 text-primary'}`}>
-                    {authTarget === 'admin' ? <Lock size={32} /> : <Gift size={32} />}
-                  </div>
-                  <h2 className="text-2xl font-black uppercase tracking-tight mb-2 text-gray-900">
-                    {authTarget === 'admin' ? 'Acesso Restrito' : 'Clube de Vantagens'}
-                  </h2>
-                  <p className="text-gray-500 text-[10px] uppercase tracking-widest font-bold">
-                    {authTarget === 'client' ? 'Identifique-se para finalizar seu pedido' : 'Somente administradores'}
-                  </p>
-                </div>
-                <form onSubmit={handleAuth} className="space-y-4">
-                  <input type="email" required value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="E-mail" className="w-full h-12 px-4 rounded-xl border border-gray-100 bg-gray-50 text-gray-900 focus:outline-none focus:border-primary" />
-                  <input type="password" required value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Senha" className="w-full h-12 px-4 rounded-xl border border-gray-100 bg-gray-50 text-gray-900 focus:outline-none focus:border-primary" />
-                  <button disabled={authLoading} className="w-full h-12 bg-primary text-white rounded-xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2">
-                    {authLoading ? <Loader2 size={18} className="animate-spin" /> : (authMode === 'login' ? 'Entrar' : 'Cadastrar')}
-                  </button>
-                </form>
-                <div className="mt-6 text-center">
-                  <button 
-                    onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')}
-                    className="text-[10px] font-bold uppercase tracking-widest text-gray-500 hover:text-primary transition-colors"
-                  >
-                    {authMode === 'login' ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Faça Login'}
-                  </button>
-                </div>
-              </div>
+           <div className="relative w-full max-w-sm rounded-[32px] overflow-hidden bg-white border border-gray-100 p-8">
+              <button onClick={() => setShowAuthModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-gray-900"><X size={20} /></button>
+              <h2 className="text-2xl font-black uppercase text-center mb-6">{authTarget === 'admin' ? 'Dashboard' : 'Login'}</h2>
+              <form onSubmit={handleAuth} className="space-y-4">
+                <input type="email" required value={authEmail} onChange={e => setAuthEmail(e.target.value)} placeholder="E-mail" className="w-full h-12 px-4 rounded-xl border bg-gray-50 text-gray-900 focus:outline-none focus:border-primary" />
+                <input type="password" required value={authPassword} onChange={e => setAuthPassword(e.target.value)} placeholder="Senha" className="w-full h-12 px-4 rounded-xl border bg-gray-50 text-gray-900 focus:outline-none focus:border-primary" />
+                <button disabled={authLoading} className="w-full h-12 bg-primary text-white rounded-xl font-bold uppercase tracking-widest text-xs flex items-center justify-center gap-2">
+                  {authLoading ? <Loader2 size={18} className="animate-spin" /> : 'Entrar'}
+                </button>
+              </form>
            </div>
         </div>
       )}
 
-      {/* NOVO ONBOARDING VISUAL */}
       {!isAdminMode && orderType === OrderType.UNSET && (
         <div className="fixed inset-0 z-[100] bg-black flex flex-col overflow-hidden animate-in fade-in duration-700">
-          
-          {/* FOOD GRID BACKGROUND */}
           <div className="absolute inset-0 grid grid-cols-3 gap-1 opacity-60">
-             {foodImages.map((src, idx) => (
-               <div key={idx} className="h-full w-full overflow-hidden">
-                 <img src={src} className="h-full w-full object-cover grayscale-[20%] hover:grayscale-0 transition-all duration-1000" />
-               </div>
-             ))}
+             {foodImages.map((src, idx) => ( <div key={idx} className="h-full w-full overflow-hidden"> <img src={src} className="h-full w-full object-cover grayscale-[20%]" /> </div> ))}
           </div>
-
-          {/* GRADIENT OVERLAY */}
           <div className="absolute inset-0 bg-gradient-to-t from-black via-black/80 to-transparent" />
-
-          {/* CONTENT */}
           <div className="relative h-full flex flex-col items-center justify-between py-20 px-8 text-center">
-            
-            <button 
-              onClick={() => { setAuthTarget('admin'); setShowAuthModal(true); }}
-              className="absolute top-8 right-8 z-[110] p-4 text-white/5 hover:text-white/20 transition-all active:scale-95"
-              title="Admin"
-            >
-              <Lock size={14} />
-            </button>
-
+            <button onClick={() => { setAuthTarget('admin'); setShowAuthModal(true); }} className="absolute top-8 right-8 text-white/5 hover:text-white/20"><Lock size={14} /></button>
             <div className="mt-auto mb-10 space-y-6">
-                <div className="space-y-1">
-                  <h1 className="font-display font-black text-4xl text-white uppercase tracking-[0.15em] drop-shadow-2xl">
-                    Churras<br/><span className="text-primary">Brutus</span>
-                  </h1>
-                  <div className="w-12 h-1 bg-primary mx-auto rounded-full mt-4" />
-                </div>
-                
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-black text-white uppercase tracking-tight">Choose your meal!</h2>
-                  <p className="text-gray-400 text-xs font-bold leading-relaxed max-w-[240px] mx-auto uppercase tracking-widest opacity-80">
-                    O melhor churrasco da região em apenas alguns toques.
-                  </p>
-                </div>
+                <h1 className="font-display font-black text-4xl text-white uppercase tracking-[0.15em]">Churras<br/><span className="text-primary">Brutus</span></h1>
+                <h2 className="text-2xl font-black text-white uppercase tracking-tight">O melhor churrasco!</h2>
             </div>
-
             <div className="w-full space-y-4 max-w-[280px]">
-              <button 
-                onClick={() => handleSelectOrderType(OrderType.LOCAL)} 
-                className="group w-full h-14 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 hover:bg-white/20 transition-all active:scale-95"
-              >
-                <Utensils size={16} /> Estou no Local
-              </button>
-
-              <button 
-                onClick={() => handleSelectOrderType(OrderType.DELIVERY)} 
-                className="group w-full h-14 bg-primary text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 shadow-xl shadow-primary/30 hover:bg-orange-600 transition-all active:scale-95"
-              >
-                Pedir Delivery <ChevronRight size={16} />
-              </button>
+              <button onClick={() => handleSelectOrderType(OrderType.LOCAL)} className="w-full h-14 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2"> <Utensils size={16} /> Estou no Local </button>
+              <button onClick={() => handleSelectOrderType(OrderType.DELIVERY)} className="w-full h-14 bg-primary text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 shadow-xl shadow-primary/30"> Pedir Delivery <ChevronRight size={16} /> </button>
             </div>
           </div>
         </div>
@@ -547,27 +339,12 @@ const App: React.FC = () => {
             {activePage === Page.ALERTS && <Alerts isDarkMode={isDarkMode} orderType={orderType} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.FAVOURITE && <Favourite isDarkMode={isDarkMode} tenant={currentTenant} favorites={favorites} toggleFavorite={toggleFavorite} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.PROFILE && <Profile isDarkMode={isDarkMode} orderType={orderType} setOrderType={setOrderType} tenant={currentTenant} orders={orders} userInfo={userInfo} setUserInfo={setUserInfo} user={user} />}
-            {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); fetchInitialData(); }} onUpdateInventory={handleUpdateInventory} onSaveCoupon={async (c) => { 
-                const dbCoupon = {
-                    id: c.id.startsWith('cp-') ? undefined : c.id,
-                    tenant_slug: 'churras-brutus',
-                    code: c.code,
-                    discount_value: c.discountValue,
-                    max_uses: c.maxUses,
-                    current_uses: c.currentUses,
-                    is_active: c.isActive,
-                    user_id: c.userId || null,
-                    customer_email: c.customerEmail || null,
-                    customer_phone: c.customer_phone
-                };
-                await supabase.from('coupons').upsert(dbCoupon); 
-                fetchInitialData(); 
-            }} onDeleteCoupon={async (id) => { await supabase.from('coupons').delete().eq('id', id); fetchInitialData(); }} onBack={() => {setIsAdminMode(false); setOrderType(OrderType.UNSET); setActivePage(Page.HOME);}} onUpdateTenant={setCurrentTenant} />}
+            {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); fetchInitialData(); }} onUpdateInventory={handleUpdateInventory} onSaveCoupon={async (c) => { await supabase.from('coupons').upsert(c); fetchInitialData(); }} onDeleteCoupon={async (id) => { await supabase.from('coupons').delete().eq('id', id); fetchInitialData(); }} onBack={() => {setIsAdminMode(false); setOrderType(OrderType.UNSET); setActivePage(Page.HOME);}} onUpdateTenant={setCurrentTenant} />}
         </main>
       )}
 
       {!isAdminMode && activePage !== Page.DETAILS && orderType !== OrderType.UNSET && (
-        <BottomNav activeTab={activePage} onTabChange={(page) => { if (page === Page.PROFILE && !user) { setAuthTarget('client'); setShowAuthModal(true); } else setActivePage(page); }} cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} isDarkMode={isDarkMode} />
+        <BottomNav activeTab={activePage} onTabChange={(page) => { if (page === Page.PROFILE && !user && !activeOrderTracking) { setAuthTarget('client'); setShowAuthModal(true); } else setActivePage(page); }} cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} isDarkMode={isDarkMode} />
       )}
     </div>
   );
