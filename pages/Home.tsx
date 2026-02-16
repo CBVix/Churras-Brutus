@@ -164,7 +164,7 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
         <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
            <div className={`w-full max-w-sm rounded-[32px] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300 ${isDarkMode ? 'bg-[#1a1a1a] border border-white/10' : 'bg-white'}`}>
               <div className="p-6 border-b border-gray-100 flex justify-between items-center">
-                 <h2 className={`text-xl font-black uppercase tracking-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Status do Pedido</h2>
+                 <h2 className={`text-xl font-black uppercase tracking-tight ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Resumo do Pedido</h2>
                  <button onClick={() => setIsStatusModalOpen(false)} className="p-2 bg-gray-100 dark:bg-white/5 rounded-full"><X size={20} className="text-gray-400" /></button>
               </div>
               <div className="p-6 space-y-6 max-h-[70vh] overflow-y-auto hide-scrollbar">
@@ -189,7 +189,7 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
                  </div>
 
                  <div className="pt-6 border-t border-gray-100 dark:border-white/5">
-                    <h4 className={`text-[10px] font-black uppercase tracking-widest text-gray-500 mb-4`}>Resumo dos Itens</h4>
+                    <h4 className={`text-[10px] font-black uppercase tracking-widest text-gray-500 mb-4`}>Itens do Pedido</h4>
                     <div className="space-y-3">
                        {activeOrder.items.map((item, idx) => (
                           <div key={idx} className="flex justify-between items-center text-xs">
@@ -199,19 +199,19 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
                        ))}
                     </div>
                     <div className="mt-6 pt-4 border-t border-dashed border-gray-200 dark:border-white/5 flex justify-between items-center">
-                       <span className={`text-[10px] font-black uppercase ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Total Pago</span>
+                       <span className={`text-[10px] font-black uppercase ${isDarkMode ? 'text-gray-400' : 'text-gray-500'}`}>Total</span>
                        <span className={`text-lg font-black ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>R$ {activeOrder.total.toFixed(2)}</span>
                     </div>
                  </div>
               </div>
               <div className="p-6 bg-gray-50 dark:bg-black/20">
-                 <button onClick={() => setIsStatusModalOpen(false)} className="w-full bg-gray-900 dark:bg-primary text-white h-14 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg">Entendido</button>
+                 <button onClick={() => setIsStatusModalOpen(false)} className="w-full bg-gray-900 dark:bg-primary text-white h-14 rounded-2xl font-black uppercase tracking-widest text-[10px] shadow-lg">Fechar</button>
               </div>
            </div>
         </div>
       )}
 
-      {/* CARD DE IDENTIDADE (HEADER) */}
+      {/* CARD DE IDENTIDADE */}
       <section className="mb-6">
         <div className={`backdrop-blur-3xl p-6 border-b shadow-xl relative transition-all duration-500 
           ${isDarkMode ? 'bg-[#1a1a1a]/95 border-white/5 shadow-black/60' : 'bg-white border-silver/50 shadow-gray-200/40'} 
@@ -261,7 +261,7 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
         </div>
       </section>
 
-      {/* CARD DE STATUS ATIVO (LARANJA SÓLIDO #FF5722) - ABAIXO DO HEADER */}
+      {/* CARD DE ACOMPANHAMENTO DE PEDIDO ATIVO (LARANJA SÓLIDO) */}
       {activeOrder && (
         <div className="px-6 mb-8">
            <button 
@@ -282,7 +282,6 @@ const Home: React.FC<HomeProps> = ({ onSelectProduct, tenant, isDarkMode, setIsD
                  </div>
               </div>
               
-              {/* Progresso simplificado no card */}
               <div className="mt-4 w-full h-1.5 bg-white/20 rounded-full overflow-hidden">
                  <div className="h-full bg-white transition-all duration-1000 ease-out" style={{ width: `${statusProgress}%` }} />
               </div>

@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Store, Upload, MapPin, Wallet, Printer, Check, Copy, Loader2, AlertCircle, Download, Clock, Calendar, X, Plus, Save, ShieldCheck, Lock, Share2 } from 'lucide-react';
+import { Store, Upload, MapPin, Wallet, Printer, Check, Copy, Loader2, AlertCircle, Download, Clock, Calendar, X, Plus, Save, ShieldCheck, Lock, Share2, Link as LinkIcon } from 'lucide-react';
 import { Tenant, PrinterSettings, BusinessHours } from '../../types';
 import { supabase } from '../../supabaseClient';
 
@@ -370,6 +370,13 @@ const DashboardSettings: React.FC<DashboardSettingsProps> = ({ tenant, onUpdateT
                     <div className="space-y-1">
                        <label className="text-[10px] font-bold text-gray-500 uppercase">Chave Pix</label>
                        <input type="text" value={settingsForm.pixKey} onChange={e => setSettingsForm({...settingsForm, pixKey: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-lg px-3 py-2 text-xs text-white" />
+                    </div>
+                    <div className="space-y-1">
+                       <label className="text-[10px] font-bold text-gray-500 uppercase">Link de Pagamento (Cartão)</label>
+                       <div className="relative">
+                          <LinkIcon size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
+                          <input type="text" placeholder="https://mercado-pago.com/..." value={settingsForm.paymentLink || ''} onChange={e => setSettingsForm({...settingsForm, paymentLink: e.target.value})} className="w-full bg-[#09090B] border border-white/10 rounded-lg pl-9 pr-3 py-2 text-xs text-white" />
+                       </div>
                     </div>
                     <div className="space-y-1">
                        <label className="text-[10px] font-bold text-gray-500 uppercase">Taxa Maquininha (%)</label>

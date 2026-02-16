@@ -30,14 +30,14 @@ interface DashboardProps {
 }
 
 const navItems = [
-  { id: 'relatorios', label: 'Relatórios', icon: <BarChart3 size={18} /> },
-  { id: 'pedidos', label: 'Pedidos (KDS)', icon: <ShoppingBag size={18} /> },
-  { id: 'cardapio', label: 'Cardápio', icon: <Boxes size={18} /> },
-  { id: 'estoque', label: 'Estoque', icon: <Package size={18} /> },
-  { id: 'clientes', label: 'Clientes', icon: <Users size={18} /> },
-  { id: 'promocoes', label: 'Promoções', icon: <Ticket size={18} /> },
-  { id: 'dre', label: 'Financeiro', icon: <Wallet size={18} /> },
-  { id: 'ajustes', label: 'Ajustes', icon: <Settings size={18} /> },
+  { id: 'relatorios', label: 'Relatórios', icon: <BarChart3 size={16} /> },
+  { id: 'pedidos', label: 'Pedidos (KDS)', icon: <ShoppingBag size={16} /> },
+  { id: 'cardapio', label: 'Cardápio', icon: <Boxes size={16} /> },
+  { id: 'estoque', label: 'Estoque', icon: <Package size={16} /> },
+  { id: 'clientes', label: 'Clientes', icon: <Users size={16} /> },
+  { id: 'promocoes', label: 'Promoções', icon: <Ticket size={16} /> },
+  { id: 'dre', label: 'Financeiro', icon: <Wallet size={16} /> },
+  { id: 'ajustes', label: 'Ajustes', icon: <Settings size={16} /> },
 ];
 
 type Section = 'relatorios' | 'cardapio' | 'pedidos' | 'estoque' | 'dre' | 'ajustes' | 'clientes' | 'promocoes';
@@ -146,38 +146,47 @@ const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="flex h-screen w-screen bg-[#09090B] overflow-hidden font-sans text-gray-400 selection:bg-primary/30">
-      {/* Sidebar - Fixo */}
-      <aside className="w-64 bg-[#09090B] border-r border-[#1F1F23] flex flex-col flex-shrink-0 z-[50]">
-        <div className="flex items-center justify-center bg-[#09090B] px-4 py-8">
-          <img src="https://i.postimg.cc/Wbfzdjgy/LOGO-CHURRAS-BRUTUS.png" alt="Brutus Admin" className="h-32 w-auto object-contain transition-transform hover:scale-105" />
+      {/* Sidebar - Visual reduzido (80%) */}
+      <aside className="w-52 bg-[#09090B] border-r border-[#1F1F23] flex flex-col flex-shrink-0 z-[50] transition-all">
+        <div className="flex items-center justify-center bg-[#09090B] px-3 py-6">
+          <img src="https://i.postimg.cc/Wbfzdjgy/LOGO-CHURRAS-BRUTUS.png" alt="Brutus Admin" className="h-20 w-auto object-contain transition-transform hover:scale-105" />
         </div>
-        <nav className="flex-1 px-3 py-6 space-y-1 overflow-y-auto hide-scrollbar">
+        <nav className="flex-1 px-2 py-4 space-y-0.5 overflow-y-auto hide-scrollbar">
           {navItems.map(item => (
-            <button key={item.id} onClick={() => setActiveSection(item.id as Section)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-xs font-bold transition-all duration-200 group ${activeSection === item.id ? 'bg-primary text-white shadow-lg shadow-primary/10 translate-x-1' : 'text-gray-400 hover:bg-[#1F1F23] hover:text-white'}`}>
+            <button 
+              key={item.id} 
+              onClick={() => setActiveSection(item.id as Section)} 
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-[10px] font-bold transition-all duration-200 group ${activeSection === item.id ? 'bg-primary text-white shadow-lg shadow-primary/10 translate-x-1' : 'text-gray-400 hover:bg-[#1F1F23] hover:text-white'}`}
+            >
               <div className={`transition-colors ${activeSection === item.id ? 'text-white' : 'text-gray-500 group-hover:text-white'}`}>{item.icon}</div>
-              <span className="uppercase tracking-wide">{item.label}</span>
-              {item.id === 'pedidos' && pendingOrdersCount > 0 && (<span className="ml-auto bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-md animate-pulse">{pendingOrdersCount}</span>)}
+              <span className="uppercase tracking-widest">{item.label}</span>
+              {item.id === 'pedidos' && pendingOrdersCount > 0 && (<span className="ml-auto bg-red-500 text-white text-[8px] px-1.5 py-0.5 rounded-md animate-pulse font-black">{pendingOrdersCount}</span>)}
             </button>
           ))}
         </nav>
-        <div className="p-4 border-t border-[#1F1F23]">
-          <button onClick={onBack} className="w-full flex items-center gap-2 px-4 py-3 rounded-xl border border-[#1F1F23] text-xs font-bold text-gray-400 hover:text-white hover:bg-[#1F1F23] transition-colors uppercase tracking-wider"><LogOut size={16} /> Sair do Sistema</button>
+        <div className="p-3 border-t border-[#1F1F23]">
+          <button onClick={onBack} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-[#1F1F23] text-[9px] font-black text-gray-500 hover:text-white hover:bg-[#1F1F23] transition-colors uppercase tracking-[0.2em]"><LogOut size={14} /> Sair</button>
         </div>
       </aside>
 
-      {/* Main Content area - Unica com Scroll global */}
+      {/* Main Content area - Compacto */}
       <main className="flex-1 flex flex-col min-w-0 relative">
-        <header className="h-[72px] border-b border-[#1F1F23] flex items-center justify-between px-8 flex-shrink-0 bg-[#09090B]/90 backdrop-blur-xl sticky top-0 z-[45]">
-           <h1 className="text-xl font-bold tracking-tight text-white capitalize">{activeSection === 'relatorios' ? 'Visão Geral' : activeSection === 'pedidos' ? 'Gestão de Cozinha (KDS)' : activeSection === 'dre' ? 'Gestão Financeira' : activeSection}</h1>
+        <header className="h-[60px] border-b border-[#1F1F23] flex items-center justify-between px-6 flex-shrink-0 bg-[#09090B]/90 backdrop-blur-xl sticky top-0 z-[45]">
+           <h1 className="text-base font-black tracking-tight text-white uppercase">{activeSection === 'relatorios' ? 'Visão Geral' : activeSection === 'pedidos' ? 'Gestão de Cozinha (KDS)' : activeSection === 'dre' ? 'Gestão Financeira' : activeSection}</h1>
+           <div className="flex items-center gap-4">
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#161618] border border-white/5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Sistema Online</span>
+              </div>
+           </div>
         </header>
         
-        {/* Este container permite o scroll de todo o conteúdo do dashboard */}
-        <div className="flex-1 overflow-y-auto p-8 scroll-smooth hide-scrollbar">
+        <div className="flex-1 overflow-y-auto p-5 scroll-smooth hide-scrollbar">
             {activeSection === 'relatorios' && (<DashboardOverview orders={orders} financePeriod={financePeriod} setFinancePeriod={handlePeriodChange} dreCalculations={dreCalculations} chartData={chartData} handleExportCSV={handleExportCSV} />)}
             {activeSection === 'pedidos' && <DashboardOrders orders={orders} setOrders={setOrders} updateOrderStatus={updateOrderStatus} now={now} tenant={tenant} />}
             {activeSection === 'cardapio' && <DashboardMenu tenant={tenant} inventory={inventory} onUpdateTenant={onUpdateTenant} />}
             {activeSection === 'estoque' && <DashboardInventory inventory={inventory} onUpdateInventory={onUpdateInventory} />}
-            {activeSection === 'clientes' && <DashboardCustomers customers={customers} customerKPIs={customerKPIs} tenant={tenant} coupons={coupons} onSaveCoupon={onSaveCoupon} />}
+            {activeSection === 'clientes' && <DashboardCustomers customerKPIs={customerKPIs} tenant={tenant} coupons={coupons} onSaveCoupon={onSaveCoupon} />}
             {activeSection === 'promocoes' && <DashboardPromos coupons={coupons} onSaveCoupon={onSaveCoupon} onDeleteCoupon={onDeleteCoupon} tenant={tenant} couponStats={couponStats} />}
             {activeSection === 'dre' && (<DashboardFinance dreCalculations={dreCalculations} manualTransactions={manualTransactions} setManualTransactions={setManualTransactions} onCloseMonth={() => fetchFinancialHistory()} tenant={tenant} fixedCostsDetails={fixedCostsDetails} setFixedCostsDetails={setFixedCostsDetails} orders={orders} inventory={inventory} financePeriod={financePeriod} setFinancePeriod={handlePeriodChange} startDate={startDate} setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate} />)}
             {activeSection === 'ajustes' && <DashboardSettings tenant={tenant} onUpdateTenant={onUpdateTenant} />}
