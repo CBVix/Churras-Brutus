@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Page, Product, CartItem, OrderType, UserInfo, Tenant, Order, OrderStatus, InventoryItem, Coupon } from './types';
 import { DEFAULT_CATEGORIES } from './constants';
 import Home from './pages/Home';
@@ -39,6 +39,11 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : { name: '', whatsapp: '', address: '', reference: '', tableNumber: '' };
   });
 
+  const [activeOrderTracking, setActiveOrderTracking] = useState<{id: string, number: string, status: string} | null>(() => {
+    const saved = localStorage.getItem('brutus_active_order');
+    return saved ? JSON.parse(saved) : null;
+  });
+
   const [cart, setCart] = useState<CartItem[]>([]);
   const [currentTenant, setCurrentTenant] = useState<Tenant | null>(null);
   const [loading, setLoading] = useState(true);
@@ -65,13 +70,27 @@ const App: React.FC = () => {
     "https://images.unsplash.com/photo-1593504049359-74330189a355?q=80&w=400&auto=format&fit=crop"
   ];
 
-  const fetchInitialData = useCallback(async (isSilent = false) => {
+  useEffect(() => {
+    localStorage.setItem('brutus_order_type', orderType);
+  }, [orderType]);
+
+  useEffect(() => {
+    localStorage.setItem('brutus_admin_mode', String(isAdminMode));
+    if (isAdminMode) setActivePage(Page.DASHBOARD);
+  }, [isAdminMode]);
+
+  useEffect(() => {
+    localStorage.setItem('brutus_user_info', JSON.stringify(userInfo));
+  }, [userInfo]);
+
+  const fetchInitialData = async () => {
     const params = new URLSearchParams(window.location.search);
     const storeSlug = params.get('loja') || 'churras-brutus';
     try {
-      if (!isSilent) setLoading(true);
+      setLoading(true);
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError) throw sessionError;
       
-      const { data: { session } } = await supabase.auth.getSession();
       const currentUser = session?.user ?? null;
       setUser(currentUser);
 
@@ -96,18 +115,19 @@ const App: React.FC = () => {
           products: []
         };
         
+        // Busca produtos incluindo o campo 'sides' (acompanhamentos)
         const { data: productsData } = await supabase.from('products').select('*').eq('tenant_slug', storeSlug);
         mappedTenant.products = (productsData || []).map((p: any) => ({
              id: p.id, name: p.name, price: Number(p.price), rating: Number(p.rating || 5), reviews: p.reviews || '0',
              image: p.image, category: p.category, prepTime: p.prep_time, description: p.description,
              isVegan: p.is_vegan, isCombo: p.is_combo, isHighlighted: p.is_highlighted, availability: p.availability,
-             inventoryId: p.inventory_id, sides: p.sides || []
+             inventoryId: p.inventory_id,
+             sides: p.sides || [] // ESSENCIAL: Inclusão dos acompanhamentos no mapeamento
         }));
         setCurrentTenant(mappedTenant);
         document.documentElement.style.setProperty('--primary-color', mappedTenant.themeColor);
       }
 
-      // Pedidos Realtime State
       const ordersQuery = supabase.from('orders').select('*').eq('tenant_slug', storeSlug).order('created_at', { ascending: false });
       if (!isAdminMode && currentUser) ordersQuery.eq('user_id', currentUser.id);
       const { data: ordersData } = await ordersQuery;
@@ -119,7 +139,6 @@ const App: React.FC = () => {
         })));
       }
 
-      // Estoque Realtime State
       const { data: inventoryData } = await supabase.from('inventory').select('*').eq('tenant_slug', storeSlug);
       if (inventoryData) {
         setInventory(inventoryData.map((i: any) => ({
@@ -127,7 +146,6 @@ const App: React.FC = () => {
         })));
       }
 
-      // Cupons Realtime State
       const { data: couponsData } = await supabase.from('coupons').select('*').eq('tenant_slug', storeSlug);
       if (couponsData) {
         setCoupons(couponsData.map((c: any) => ({
@@ -139,31 +157,80 @@ const App: React.FC = () => {
     } finally { 
       setLoading(false); 
     }
-  }, [isAdminMode]);
+  };
 
   useEffect(() => {
     fetchInitialData();
     
     const storeSlug = new URLSearchParams(window.location.search).get('loja') || 'churras-brutus';
     
-    // CENTRAL REALTIME HUB - Monitora todas as tabelas
-    const realtimeHub = supabase.channel('brutus_realtime_hub')
-      // Monitorar Tenant
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'tenants', filter: `slug=eq.${storeSlug}` }, () => fetchInitialData(true))
-      // Monitorar Produtos (Preços, Sides, Disponibilidade)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `tenant_slug=eq.${storeSlug}` }, () => fetchInitialData(true))
-      // Monitorar Pedidos (Status, Novos Pedidos)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: `tenant_slug=eq.${storeSlug}` }, () => fetchInitialData(true))
-      // Monitorar Estoque
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory', filter: `tenant_slug=eq.${storeSlug}` }, () => fetchInitialData(true))
-      // Monitorar Cupons
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'coupons', filter: `tenant_slug=eq.${storeSlug}` }, () => fetchInitialData(true))
+    // Realtime tenant update
+    const tenantChannel = supabase.channel(`tenant_updates_${storeSlug}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'tenants', filter: `slug=eq.${storeSlug}` }, () => fetchInitialData())
+      .subscribe();
+
+    // Realtime products update (PARA ACOMPANHAMENTOS E NOVOS ITENS)
+    const productsChannel = supabase.channel(`products_updates_${storeSlug}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'products', filter: `tenant_slug=eq.${storeSlug}` }, () => {
+        console.log("Produtos atualizados em tempo real!");
+        fetchInitialData();
+      })
       .subscribe();
 
     return () => { 
-      supabase.removeChannel(realtimeHub);
+      supabase.removeChannel(tenantChannel); 
+      supabase.removeChannel(productsChannel);
     };
-  }, [fetchInitialData]);
+  }, [isAdminMode]);
+
+  const handleSelectOrderType = (type: OrderType) => {
+    setOrderType(type);
+  };
+
+  const handleUpdateInventory = (newInventory: InventoryItem[]) => {
+    setInventory(newInventory);
+  };
+
+  const handlePlaceOrder = async (coupon?: Coupon) => {
+    if (!currentTenant || cart.length === 0) return;
+    const subtotal = cart.reduce((acc, item) => {
+        const sidePrices = (item.selectedSides || []).reduce((sAcc, s) => sAcc + s.price, 0);
+        return acc + (item.price + sidePrices) * item.quantity;
+    }, 0);
+    const deliveryFee = orderType === OrderType.DELIVERY ? currentTenant.deliveryFee : 0;
+    const discountValue = coupon ? coupon.discountValue : 0;
+    const totalValue = Math.max(0, subtotal + deliveryFee - discountValue);
+
+    const orderData = {
+      tenant_slug: currentTenant.slug,
+      customer_name: userInfo.name,
+      customer_whatsapp: userInfo.whatsapp,
+      items: cart,
+      total: totalValue,
+      type: orderType,
+      status: 'pending' as OrderStatus,
+      table_number: userInfo.tableNumber,
+      address: userInfo.address,
+      user_id: user?.id || null,
+      coupon_code: coupon?.code || null,
+      discount_applied: discountValue
+    };
+
+    try {
+      const { error } = await supabase.from('orders').insert([orderData]);
+      if (error) throw error;
+      if (coupon) {
+        await supabase.from('coupons').update({ current_uses: (coupon.currentUses || 0) + 1 }).eq('id', coupon.id);
+      }
+      setCart([]);
+      alert("Pedido enviado com sucesso!");
+      fetchInitialData();
+      setActivePage(Page.ALERTS);
+    } catch (err: any) {
+      console.error("Erro ao criar pedido:", err);
+      alert("Erro ao realizar pedido. Verifique sua conexão.");
+    }
+  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,7 +254,7 @@ const App: React.FC = () => {
           options: { data: { full_name: authName } }
         });
         if (error) throw error;
-        alert("Cadastro realizado! Verifique seu e-mail.");
+        alert("Cadastro realizado! Verifique seu e-mail ou faça login.");
         setAuthMode('login');
       }
     } catch (err: any) { 
@@ -223,6 +290,12 @@ const App: React.FC = () => {
                   {authLoading ? <Loader2 size={20} className="animate-spin" /> : (authMode === 'login' ? 'ENTRAR' : 'CADASTRAR')}
                 </button>
               </form>
+              
+              <div className="mt-8 text-center">
+                  <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 hover:text-primary transition-colors">
+                    {authMode === 'login' ? 'Não tem conta? Cadastre-se' : 'Já tem conta? Faça Login'}
+                  </button>
+              </div>
            </div>
         </div>
       )}
@@ -237,12 +310,15 @@ const App: React.FC = () => {
             
             <div className="absolute top-8 left-8 right-8 flex justify-between items-center">
                 <button onClick={() => { setAuthTarget('admin'); setAuthMode('login'); setShowAuthModal(true); }} className="text-white opacity-20 hover:opacity-50 transition-opacity p-2 rounded-full active:scale-90"><Lock size={20} /></button>
+                
                 <div className="flex gap-2">
                     <button onClick={() => { setAuthTarget('client'); setAuthMode('signup'); setShowAuthModal(true); }} className="bg-white/5 hover:bg-white/10 px-6 py-2.5 rounded-full text-white text-[9px] font-black uppercase tracking-widest flex items-center gap-2 border border-white/10 active:scale-95 transition-all backdrop-blur-md">
-                      <UserPlus size={14} className="opacity-80" /> <span>CADASTRAR</span>
+                      <UserPlus size={14} className="opacity-80" /> 
+                      <span>CADASTRAR</span>
                     </button>
                     <button onClick={() => { setAuthTarget('client'); setAuthMode('login'); setShowAuthModal(true); }} className="bg-[#1A1A1A] hover:bg-[#252525] px-6 py-2.5 rounded-full text-white text-[10px] font-black uppercase tracking-widest flex items-center gap-2 border border-white/5 shadow-2xl active:scale-95 transition-all">
-                      <LogIn size={14} className="opacity-80" /> <span>ENTRAR</span>
+                      <LogIn size={14} className="opacity-80" /> 
+                      <span>ENTRAR</span>
                     </button>
                 </div>
             </div>
@@ -253,8 +329,9 @@ const App: React.FC = () => {
             </div>
             
             <div className="w-full space-y-4 max-w-[280px]">
-              <button onClick={() => setOrderType(OrderType.LOCAL)} className="w-full h-14 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all hover:bg-white/20"> <Utensils size={16} /> Estou no Local </button>
-              <button onClick={() => setOrderType(OrderType.DELIVERY)} className="w-full h-14 bg-primary text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 shadow-xl shadow-primary/30 transition-all hover:bg-orange-600"> Pedir Delivery <ChevronRight size={16} /> </button>
+              <button onClick={() => handleSelectOrderType(OrderType.LOCAL)} className="w-full h-14 bg-white/10 backdrop-blur-md border border-white/20 text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 transition-all hover:bg-white/20"> <Utensils size={16} /> Estou no Local </button>
+              <button onClick={() => handleSelectOrderType(OrderType.DELIVERY)} className="w-full h-14 bg-primary text-white rounded-full font-black text-[11px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 shadow-xl shadow-primary/30 transition-all hover:bg-orange-600"> Pedir Delivery <ChevronRight size={16} /> </button>
+              <button onClick={() => { setAuthTarget('client'); setAuthMode('signup'); setShowAuthModal(true); }} className="text-white/40 text-[9px] font-black uppercase tracking-[0.3em] mt-4 hover:text-white transition-colors">Ainda não tem conta? Clique aqui</button>
             </div>
           </div>
         </div>
@@ -264,16 +341,16 @@ const App: React.FC = () => {
         <main className="flex-1 overflow-y-auto hide-scrollbar">
             {activePage === Page.HOME && <Home onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} tenant={currentTenant} isDarkMode={isDarkMode} setIsDarkMode={setIsDarkMode} coupons={coupons} user={user} orderType={orderType} onOpenAuth={() => { setAuthTarget('client'); setAuthMode('login'); setShowAuthModal(true); }} onGoToAlerts={() => setActivePage(Page.ALERTS)} />}
             {activePage === Page.DETAILS && selectedProduct && <ProductDetails isDarkMode={isDarkMode} product={selectedProduct} onBack={() => setActivePage(Page.HOME)} onAddToCart={(p, q, ex, obs, don, sides) => { setCart([...cart, {...p, quantity: q, extras: ex, itemObservation: obs, selectedSides: sides}]); setActivePage(Page.CART); }} isFavorite={isFavorite(selectedProduct.id)} toggleFavorite={() => toggleFavorite(selectedProduct.id)} />}
-            {activePage === Page.CART && <Cart isDarkMode={isDarkMode} items={cart} orderType={orderType} userInfo={userInfo} setUserInfo={setUserInfo} onUpdateQuantity={(id, d) => setCart(prev => prev.map(i => i.id === id ? {...i, quantity: Math.max(0, i.quantity + d)} : i).filter(i => i.quantity > 0))} onBack={() => setActivePage(Page.HOME)} tenant={currentTenant} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onCheckout={() => {setCart([]); setActivePage(Page.ALERTS);}} coupons={coupons} user={user} />}
+            {activePage === Page.CART && <Cart isDarkMode={isDarkMode} items={cart} orderType={orderType} userInfo={userInfo} setUserInfo={setUserInfo} onUpdateQuantity={(id, d) => setCart(prev => prev.map(i => i.id === id ? {...i, quantity: Math.max(0, i.quantity + d)} : i).filter(i => i.quantity > 0))} onBack={() => setActivePage(Page.HOME)} tenant={currentTenant} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onCheckout={handlePlaceOrder} coupons={coupons} user={user} />}
             {activePage === Page.ALERTS && <Alerts isDarkMode={isDarkMode} orderType={orderType} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.FAVOURITE && <Favourite isDarkMode={isDarkMode} tenant={currentTenant} favorites={favorites} toggleFavorite={toggleFavorite} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.PROFILE && <Profile isDarkMode={isDarkMode} orderType={orderType} setOrderType={setOrderType} tenant={currentTenant} orders={orders} userInfo={userInfo} setUserInfo={setUserInfo} user={user} />}
-            {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} setOrders={setOrders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); }} onUpdateInventory={setInventory} onSaveCoupon={async (c) => { await supabase.from('coupons').upsert(c); }} onDeleteCoupon={async (id) => { await supabase.from('coupons').delete().eq('id', id); }} onBack={() => {setIsAdminMode(false); setOrderType(OrderType.UNSET); setActivePage(Page.HOME);}} onUpdateTenant={setCurrentTenant} />}
+            {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} setOrders={setOrders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); }} onUpdateInventory={handleUpdateInventory} onSaveCoupon={async (c) => { await supabase.from('coupons').upsert(c); fetchInitialData(); }} onDeleteCoupon={async (id) => { await supabase.from('coupons').delete().eq('id', id); fetchInitialData(); }} onBack={() => {setIsAdminMode(false); setOrderType(OrderType.UNSET); setActivePage(Page.HOME);}} onUpdateTenant={setCurrentTenant} />}
         </main>
       )}
 
       {!isAdminMode && activePage !== Page.DETAILS && orderType !== OrderType.UNSET && (
-        <BottomNav activeTab={activePage} onTabChange={(page) => { if (page === Page.PROFILE && !user) { setAuthTarget('client'); setAuthMode('login'); setShowAuthModal(true); } else setActivePage(page); }} cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} isDarkMode={isDarkMode} />
+        <BottomNav activeTab={activePage} onTabChange={(page) => { if (page === Page.PROFILE && !user && !activeOrderTracking) { setAuthTarget('client'); setAuthMode('login'); setShowAuthModal(true); } else setActivePage(page); }} cartCount={cart.reduce((acc, item) => acc + item.quantity, 0)} isDarkMode={isDarkMode} />
       )}
     </div>
   );

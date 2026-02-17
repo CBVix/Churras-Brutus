@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { BarChart3, Boxes, Settings, ShoppingBag, Package, Wallet, Users, Ticket, LogOut, User as UserIcon } from 'lucide-react';
+import { BarChart3, Boxes, Settings, ShoppingBag, Package, Wallet, Users, Ticket, LogOut } from 'lucide-react';
 import { Tenant, Order, OrderStatus, InventoryItem, DREHistoryItem, Coupon, WasteRecord } from '../types';
 import { supabase } from '../supabaseClient';
 import { useDashboardLogic } from '../hooks/useDashboardLogic';
@@ -51,23 +51,28 @@ const Dashboard: React.FC<DashboardProps> = ({
   const [endDate, setEndDate] = useState<string>('');
   const [now, setNow] = useState(new Date());
   const [manualTransactions, setManualTransactions] = useState<any[]>([]);
+  const [wasteRecords, setWasteRecords] = useState<WasteRecord[]>([]);
+  const [dreHistory, setDreHistory] = useState<DREHistoryItem[]>([]);
   const [fixedCostsDetails, setFixedCostsDetails] = useState<any[]>([]);
-  const [adminProfile, setAdminProfile] = useState<{avatar_url?: string, full_name?: string} | null>(null);
+  const [financeGoal, setFinanceGoal] = useState({ type: 'breakeven', targetValue: 0 });
 
   useEffect(() => {
-    fetchAdminProfile();
+    const savedWaste = localStorage.getItem('churrasco_waste');
+    const savedGoal = localStorage.getItem('churrasco_finance_goal');
+    if (savedWaste) setWasteRecords(JSON.parse(savedWaste));
+    if (savedGoal) setFinanceGoal(JSON.parse(savedGoal));
     updateDatesFromPeriod('month');
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('churrasco_waste', JSON.stringify(wasteRecords));
+    localStorage.setItem('churrasco_finance_goal', JSON.stringify(financeGoal));
+  }, [wasteRecords, financeGoal]);
+
+  useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 10000); 
     return () => clearInterval(timer);
   }, []);
-
-  const fetchAdminProfile = async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session?.user) {
-        const { data } = await supabase.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
-        if (data) setAdminProfile(data);
-    }
-  };
 
   const updateDatesFromPeriod = (period: 'today' | 'week' | 'month' | 'year' | 'custom') => {
     const today = new Date();
@@ -83,15 +88,65 @@ const Dashboard: React.FC<DashboardProps> = ({
     setStartDate(formatDate(start));
   };
 
-  const { customerKPIs, chartData, dreCalculations } = useDashboardLogic(
-    orders, inventory, tenant, financePeriod, startDate, endDate, manualTransactions, fixedCostsDetails, null, []
+  const handlePeriodChange = (period: 'today' | 'week' | 'month' | 'year' | 'custom') => {
+      setFinancePeriod(period);
+      updateDatesFromPeriod(period);
+  };
+
+  const fetchFinancialHistory = async () => {
+    try {
+       const { data } = await supabase.from('financial_snapshots').select('*').eq('tenant_slug', tenant.slug).order('year', { ascending: false }).order('month', { ascending: false }).limit(12);
+       if (data && data.length > 0) {
+         setDreHistory(data.map((item: any) => {
+           const date = new Date(item.year, item.month - 1);
+           const periodName = date.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+           return {
+             period: periodName.charAt(0).toUpperCase() + periodName.slice(1),
+             revenue: item.revenue, cmv: item.cmv, fixedCosts: item.fixed_costs, netProfit: item.net_profit, margin: item.margin
+           };
+         }));
+       }
+    } catch (err) { console.error(err); }
+  };
+
+  useEffect(() => {
+    if (activeSection === 'dre') fetchFinancialHistory();
+  }, [activeSection, tenant.slug]);
+
+  const { customers, customerKPIs, chartData, dreCalculations } = useDashboardLogic(
+    orders, inventory, tenant, financePeriod, startDate, endDate, manualTransactions, fixedCostsDetails, financeGoal, dreHistory
   );
 
   const pendingOrdersCount = useMemo(() => orders.filter(o => o.status === 'pending').length, [orders]);
 
+  const handleExportCSV = () => {
+    const headers = ['ID', 'Cliente', 'Tipo', 'Total', 'Data', 'Status'];
+    const rows = orders.map(o => [o.id, o.customerName, o.type === 'delivery' ? 'Delivery' : 'Mesa', o.total.toFixed(2), new Date(o.createdAt).toLocaleDateString(), o.status].join(','));
+    const csvContent = "data:text/csv;charset=utf-8," + headers.join(',') + "\n" + rows.join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `relatorio_vendas_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const couponStats = useMemo(() => {
+      const stats: Record<string, { revenue: number, count: number }> = {};
+      orders.forEach(order => {
+          if (order.couponCode) {
+              if (!stats[order.couponCode]) stats[order.couponCode] = { revenue: 0, count: 0 };
+              stats[order.couponCode].revenue += order.total;
+              stats[order.couponCode].count += 1;
+          }
+      });
+      return stats;
+  }, [orders]);
+
   return (
     <div className="flex h-screen w-screen bg-[#09090B] overflow-hidden font-sans text-gray-400 selection:bg-primary/30">
-      {/* Sidebar - Escala 80% */}
+      {/* Sidebar - Visual reduzido (80%) */}
       <aside className="w-52 bg-[#09090B] border-r border-[#1F1F23] flex flex-col flex-shrink-0 z-[50] transition-all">
         <div className="flex items-center justify-center bg-[#09090B] px-3 py-6">
           <img src="https://i.postimg.cc/Wbfzdjgy/LOGO-CHURRAS-BRUTUS.png" alt="Brutus Admin" className="h-20 w-auto object-contain transition-transform hover:scale-105" />
@@ -110,47 +165,31 @@ const Dashboard: React.FC<DashboardProps> = ({
           ))}
         </nav>
         <div className="p-3 border-t border-[#1F1F23]">
-          <button onClick={onBack} className="w-full flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border border-[#1F1F23] text-[9px] font-black text-gray-500 hover:text-white hover:bg-[#1F1F23] transition-colors uppercase tracking-[0.2em]"><LogOut size={14} /> Sair</button>
+          <button onClick={onBack} className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg border border-[#1F1F23] text-[9px] font-black text-gray-500 hover:text-white hover:bg-[#1F1F23] transition-colors uppercase tracking-[0.2em]"><LogOut size={14} /> Sair</button>
         </div>
       </aside>
 
-      {/* Main Content area */}
+      {/* Main Content area - Compacto */}
       <main className="flex-1 flex flex-col min-w-0 relative">
         <header className="h-[60px] border-b border-[#1F1F23] flex items-center justify-between px-6 flex-shrink-0 bg-[#09090B]/90 backdrop-blur-xl sticky top-0 z-[45]">
+           <h1 className="text-base font-black tracking-tight text-white uppercase">{activeSection === 'relatorios' ? 'Visão Geral' : activeSection === 'pedidos' ? 'Gestão de Cozinha (KDS)' : activeSection === 'dre' ? 'Gestão Financeira' : activeSection}</h1>
            <div className="flex items-center gap-4">
-              <h1 className="text-base font-black tracking-tight text-white uppercase">
-                {activeSection === 'relatorios' ? 'Visão Geral' : activeSection === 'pedidos' ? 'Cozinha (KDS)' : activeSection === 'dre' ? 'Financeiro' : activeSection}
-              </h1>
-              <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/5 border border-emerald-500/10">
-                <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[8px] font-black text-emerald-500 uppercase tracking-widest">Real-time Ativo</span>
-              </div>
-           </div>
-           
-           <div className="flex items-center gap-4">
-              <div className="flex flex-col items-end mr-1">
-                 <span className="text-[9px] font-black text-white uppercase tracking-wider">{tenant.name}</span>
-                 <span className="text-[8px] text-gray-500 font-bold uppercase tracking-widest">Administrador</span>
-              </div>
-              <div className="w-9 h-9 rounded-xl border border-white/10 overflow-hidden bg-[#161618] flex items-center justify-center relative">
-                 {adminProfile?.avatar_url ? (
-                    <img src={adminProfile.avatar_url} className="w-full h-full object-cover" alt="Perfil" />
-                 ) : (
-                    <UserIcon size={18} className="text-gray-600" />
-                 )}
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#161618] border border-white/5">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[9px] font-black text-gray-500 uppercase tracking-widest">Sistema Online</span>
               </div>
            </div>
         </header>
         
         <div className="flex-1 overflow-y-auto p-5 scroll-smooth hide-scrollbar">
-            {activeSection === 'relatorios' && (<DashboardOverview orders={orders} financePeriod={financePeriod} setFinancePeriod={setFinancePeriod} dreCalculations={dreCalculations} chartData={chartData} handleExportCSV={() => {}} />)}
+            {activeSection === 'relatorios' && (<DashboardOverview orders={orders} financePeriod={financePeriod} setFinancePeriod={handlePeriodChange} dreCalculations={dreCalculations} chartData={chartData} handleExportCSV={handleExportCSV} />)}
             {activeSection === 'pedidos' && <DashboardOrders orders={orders} setOrders={setOrders} updateOrderStatus={updateOrderStatus} now={now} tenant={tenant} />}
             {activeSection === 'cardapio' && <DashboardMenu tenant={tenant} inventory={inventory} onUpdateTenant={onUpdateTenant} />}
             {activeSection === 'estoque' && <DashboardInventory inventory={inventory} onUpdateInventory={onUpdateInventory} />}
             {activeSection === 'clientes' && <DashboardCustomers customerKPIs={customerKPIs} tenant={tenant} coupons={coupons} onSaveCoupon={onSaveCoupon} />}
-            {activeSection === 'promocoes' && <DashboardPromos coupons={coupons} onSaveCoupon={onSaveCoupon} onDeleteCoupon={onDeleteCoupon} tenant={tenant} couponStats={{}} />}
-            {activeSection === 'dre' && (<DashboardFinance dreCalculations={dreCalculations} manualTransactions={manualTransactions} setManualTransactions={setManualTransactions} onCloseMonth={() => {}} tenant={tenant} fixedCostsDetails={fixedCostsDetails} setFixedCostsDetails={setFixedCostsDetails} orders={orders} inventory={inventory} financePeriod={financePeriod} setFinancePeriod={setFinancePeriod} startDate={startDate} setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate} />)}
-            {activeSection === 'ajustes' && <DashboardSettings tenant={tenant} onUpdateTenant={onUpdateTenant} onUpdateProfile={fetchAdminProfile} />}
+            {activeSection === 'promocoes' && <DashboardPromos coupons={coupons} onSaveCoupon={onSaveCoupon} onDeleteCoupon={onDeleteCoupon} tenant={tenant} couponStats={couponStats} />}
+            {activeSection === 'dre' && (<DashboardFinance dreCalculations={dreCalculations} manualTransactions={manualTransactions} setManualTransactions={setManualTransactions} onCloseMonth={() => fetchFinancialHistory()} tenant={tenant} fixedCostsDetails={fixedCostsDetails} setFixedCostsDetails={setFixedCostsDetails} orders={orders} inventory={inventory} financePeriod={financePeriod} setFinancePeriod={handlePeriodChange} startDate={startDate} setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate} />)}
+            {activeSection === 'ajustes' && <DashboardSettings tenant={tenant} onUpdateTenant={onUpdateTenant} />}
         </div>
       </main>
     </div>
