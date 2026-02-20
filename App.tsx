@@ -191,6 +191,49 @@ const App: React.FC = () => {
     setInventory(newInventory);
   };
 
+  const handleSaveInventoryItem = async (item: InventoryItem) => {
+    if (!currentTenant) return;
+    try {
+      const isNew = item.id.startsWith('inv-');
+      const dbItem: any = {
+        name: item.name,
+        current_qty: item.currentQty,
+        min_qty: item.minQty,
+        unit: item.unit,
+        category: item.category,
+        cost_price: item.costPrice,
+        tenant_slug: currentTenant.slug
+      };
+
+      if (!isNew) {
+        dbItem.id = item.id;
+      }
+
+      const { error } = await supabase.from('inventory').upsert(dbItem);
+      if (error) throw error;
+      
+      await fetchInitialData();
+    } catch (err: any) {
+      console.error("Erro ao salvar item de estoque:", err);
+      alert("Erro ao salvar item de estoque: " + err.message);
+    }
+  };
+
+  const handleDeleteInventoryItem = async (id: string) => {
+    if (id.startsWith('inv-')) {
+        setInventory(prev => prev.filter(i => i.id !== id));
+        return;
+    }
+    try {
+      const { error } = await supabase.from('inventory').delete().eq('id', id);
+      if (error) throw error;
+      await fetchInitialData();
+    } catch (err: any) {
+      console.error("Erro ao excluir item de estoque:", err);
+      alert("Erro ao excluir item de estoque: " + err.message);
+    }
+  };
+
   const handlePlaceOrder = async (coupon?: Coupon) => {
     if (!currentTenant || cart.length === 0) return;
     const subtotal = cart.reduce((acc, item) => {
@@ -345,7 +388,7 @@ const App: React.FC = () => {
             {activePage === Page.ALERTS && <Alerts isDarkMode={isDarkMode} orderType={orderType} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.FAVOURITE && <Favourite isDarkMode={isDarkMode} tenant={currentTenant} favorites={favorites} toggleFavorite={toggleFavorite} onSelectProduct={(p) => { setSelectedProduct(p); setActivePage(Page.DETAILS); }} onBack={() => setActivePage(Page.HOME)} />}
             {activePage === Page.PROFILE && <Profile isDarkMode={isDarkMode} orderType={orderType} setOrderType={setOrderType} tenant={currentTenant} orders={orders} userInfo={userInfo} setUserInfo={setUserInfo} user={user} />}
-            {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} setOrders={setOrders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); }} onUpdateInventory={handleUpdateInventory} onSaveCoupon={async (c) => { await supabase.from('coupons').upsert(c); fetchInitialData(); }} onDeleteCoupon={async (id) => { await supabase.from('coupons').delete().eq('id', id); fetchInitialData(); }} onBack={() => {setIsAdminMode(false); setOrderType(OrderType.UNSET); setActivePage(Page.HOME);}} onUpdateTenant={setCurrentTenant} />}
+            {activePage === Page.DASHBOARD && <Dashboard tenant={currentTenant} orders={orders} setOrders={setOrders} inventory={inventory} coupons={coupons} updateOrderStatus={async (id, s) => { await supabase.from('orders').update({status: s}).eq('id', id); }} onUpdateInventory={handleUpdateInventory} onSaveInventoryItem={handleSaveInventoryItem} onDeleteInventoryItem={handleDeleteInventoryItem} onSaveCoupon={async (c) => { await supabase.from('coupons').upsert(c); fetchInitialData(); }} onDeleteCoupon={async (id) => { await supabase.from('coupons').delete().eq('id', id); fetchInitialData(); }} onBack={() => {setIsAdminMode(false); setOrderType(OrderType.UNSET); setActivePage(Page.HOME);}} onUpdateTenant={setCurrentTenant} />}
         </main>
       )}
 

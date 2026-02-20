@@ -1,15 +1,18 @@
 
 import React, { useState, useMemo } from 'react';
 import { InventoryItem, InventoryCategory } from '../../types';
-import { Coins, AlertTriangle, Wallet, ChevronDown, Search, ClipboardList, Plus, Package, Minus, AlertOctagon, Edit2, Trash2, CheckCircle2, X } from 'lucide-react';
+import { Coins, AlertTriangle, Wallet, ChevronDown, Search, ClipboardList, Plus, Package, Minus, AlertOctagon, Edit2, Trash2, CheckCircle2, X, Loader2 } from 'lucide-react';
 
 interface DashboardInventoryProps {
   inventory: InventoryItem[];
   onUpdateInventory: (inventory: InventoryItem[]) => void;
+  onSaveInventoryItem: (item: InventoryItem) => Promise<void>;
+  onDeleteInventoryItem: (id: string) => Promise<void>;
 }
 
-const DashboardInventory: React.FC<DashboardInventoryProps> = ({ inventory, onUpdateInventory }) => {
+const DashboardInventory: React.FC<DashboardInventoryProps> = ({ inventory, onUpdateInventory, onSaveInventoryItem, onDeleteInventoryItem }) => {
   const [inventorySearch, setInventorySearch] = useState('');
+  const [isSavingAll, setIsSavingAll] = useState(false);
   const [inventoryCategoryFilter, setInventoryCategoryFilter] = useState<'all' | InventoryCategory>('all');
   const [inventoryStatusFilter, setInventoryStatusFilter] = useState<'all' | 'low_stock'>('all');
   const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
@@ -56,10 +59,9 @@ const DashboardInventory: React.FC<DashboardInventoryProps> = ({ inventory, onUp
 
   const adjustInventory = (id: string, delta: number) => { const updated = inventory.map(item => item.id === id ? { ...item, currentQty: Math.max(0, item.currentQty + delta) } : item); onUpdateInventory(updated); };
   
-  const handleSaveInventory = (e: React.FormEvent) => { 
+  const handleSaveInventory = async (e: React.FormEvent) => { 
     e.preventDefault(); 
     
-    // Garantir que os campos numéricos sejam números
     const cleanFormValues = {
         ...inventoryForm,
         currentQty: Number(inventoryForm.currentQty) || 0,
@@ -67,20 +69,39 @@ const DashboardInventory: React.FC<DashboardInventoryProps> = ({ inventory, onUp
         costPrice: Number(inventoryForm.costPrice) || 0
     };
 
-    if (editingInventoryId) { 
-        const updated = inventory.map(item => item.id === editingInventoryId ? { ...item, ...cleanFormValues } as InventoryItem : item); 
-        onUpdateInventory(updated); 
-    } else { 
-        const newItem: InventoryItem = { ...cleanFormValues, id: `inv-${Date.now()}` } as InventoryItem; 
-        onUpdateInventory([...inventory, newItem]); 
-    } 
-    
-    setIsInventoryModalOpen(false); 
-    setEditingInventoryId(null); 
-    setInventoryForm({ name: '', currentQty: 0, minQty: 0, unit: 'un', category: 'proteinas', costPrice: 0 }); 
+    const itemToSave: InventoryItem = editingInventoryId 
+        ? { ...inventory.find(i => i.id === editingInventoryId), ...cleanFormValues } as InventoryItem
+        : { ...cleanFormValues, id: `inv-${Date.now()}` } as InventoryItem;
+
+    try {
+        await onSaveInventoryItem(itemToSave);
+        setIsInventoryModalOpen(false); 
+        setEditingInventoryId(null); 
+        setInventoryForm({ name: '', currentQty: 0, minQty: 0, unit: 'un', category: 'proteinas', costPrice: 0 }); 
+    } catch (err) {
+        console.error(err);
+    }
   };
 
-  const handleDeleteInventory = (id: string) => { onUpdateInventory(inventory.filter(i => i.id !== id)); };
+  const handleDeleteInventory = async (id: string) => { 
+    if (confirm('Tem certeza que deseja excluir este item?')) {
+        await onDeleteInventoryItem(id); 
+    }
+  };
+
+  const handleSaveAll = async () => {
+    setIsSavingAll(true);
+    try {
+        for (const item of inventory) {
+            await onSaveInventoryItem(item);
+        }
+        alert('Todo o estoque foi salvo com sucesso!');
+    } catch (err) {
+        alert('Erro ao salvar estoque completo.');
+    } finally {
+        setIsSavingAll(false);
+    }
+  };
 
   const renderStatus = (item: InventoryItem) => {
     if (item.currentQty <= item.minQty) {
@@ -149,6 +170,14 @@ const DashboardInventory: React.FC<DashboardInventoryProps> = ({ inventory, onUp
          </div>
          
          <div className="flex gap-2">
+            <button 
+                onClick={handleSaveAll} 
+                disabled={isSavingAll}
+                className={`bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-blue-900/20 transition-all active:scale-95 ${isSavingAll ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+                {isSavingAll ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                {isSavingAll ? 'Salvando...' : 'Salvar Alterações'}
+            </button>
             <button onClick={handleGenerateShoppingList} className="bg-[#25D366] hover:bg-[#20bd5a] text-white px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-2 shadow-lg shadow-green-900/20 transition-all active:scale-95">
                 <ClipboardList size={14} /> Gerar Lista de Compras
             </button>

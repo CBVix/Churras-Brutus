@@ -23,6 +23,8 @@ interface DashboardProps {
   coupons: Coupon[];
   updateOrderStatus: (id: string, status: OrderStatus) => void;
   onUpdateInventory: (inventory: InventoryItem[]) => void;
+  onSaveInventoryItem: (item: InventoryItem) => Promise<void>;
+  onDeleteInventoryItem: (id: string) => Promise<void>;
   onSaveCoupon: (coupon: Coupon) => void;
   onDeleteCoupon: (id: string) => void;
   onBack: () => void;
@@ -43,7 +45,7 @@ const navItems = [
 type Section = 'relatorios' | 'cardapio' | 'pedidos' | 'estoque' | 'dre' | 'ajustes' | 'clientes' | 'promocoes';
 
 const Dashboard: React.FC<DashboardProps> = ({ 
-  tenant, orders, setOrders, inventory, coupons, updateOrderStatus, onUpdateInventory, onSaveCoupon, onDeleteCoupon, onBack, onUpdateTenant 
+  tenant, orders, setOrders, inventory, coupons, updateOrderStatus, onUpdateInventory, onSaveInventoryItem, onDeleteInventoryItem, onSaveCoupon, onDeleteCoupon, onBack, onUpdateTenant 
 }) => {
   const [activeSection, setActiveSection] = useState<Section>('relatorios');
   const [financePeriod, setFinancePeriod] = useState<'today' | 'week' | 'month' | 'year' | 'custom'>('month');
@@ -185,7 +187,7 @@ const Dashboard: React.FC<DashboardProps> = ({
             {activeSection === 'relatorios' && (<DashboardOverview orders={orders} financePeriod={financePeriod} setFinancePeriod={handlePeriodChange} dreCalculations={dreCalculations} chartData={chartData} handleExportCSV={handleExportCSV} />)}
             {activeSection === 'pedidos' && <DashboardOrders orders={orders} setOrders={setOrders} updateOrderStatus={updateOrderStatus} now={now} tenant={tenant} />}
             {activeSection === 'cardapio' && <DashboardMenu tenant={tenant} inventory={inventory} onUpdateTenant={onUpdateTenant} />}
-            {activeSection === 'estoque' && <DashboardInventory inventory={inventory} onUpdateInventory={onUpdateInventory} />}
+            {activeSection === 'estoque' && <DashboardInventory inventory={inventory} onUpdateInventory={onUpdateInventory} onSaveInventoryItem={onSaveInventoryItem} onDeleteInventoryItem={onDeleteInventoryItem} />}
             {activeSection === 'clientes' && <DashboardCustomers customerKPIs={customerKPIs} tenant={tenant} coupons={coupons} onSaveCoupon={onSaveCoupon} />}
             {activeSection === 'promocoes' && <DashboardPromos coupons={coupons} onSaveCoupon={onSaveCoupon} onDeleteCoupon={onDeleteCoupon} tenant={tenant} couponStats={couponStats} />}
             {activeSection === 'dre' && (<DashboardFinance dreCalculations={dreCalculations} manualTransactions={manualTransactions} setManualTransactions={setManualTransactions} onCloseMonth={() => fetchFinancialHistory()} tenant={tenant} fixedCostsDetails={fixedCostsDetails} setFixedCostsDetails={setFixedCostsDetails} orders={orders} inventory={inventory} financePeriod={financePeriod} setFinancePeriod={handlePeriodChange} startDate={startDate} setStartDate={setStartDate} endDate={endDate} setEndDate={setEndDate} />)}
